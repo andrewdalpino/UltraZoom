@@ -51,8 +51,8 @@ def main():
     parser.add_argument("--contrast_jitter", default=0.1, type=float)
     parser.add_argument("--saturation_jitter", default=0.1, type=float)
     parser.add_argument("--hue_jitter", default=0.1, type=float)
-    parser.add_argument("--batch_size", default=32, type=int)
-    parser.add_argument("--gradient_accumulation_steps", default=4, type=int)
+    parser.add_argument("--batch_size", default=4, type=int)
+    parser.add_argument("--gradient_accumulation_steps", default=16, type=int)
     parser.add_argument("--num_epochs", default=100, type=int)
     parser.add_argument("--learning_rate", default=1e-4, type=float)
     parser.add_argument("--max_gradient_norm", default=1.0, type=float)
@@ -152,6 +152,8 @@ def main():
 
     model = UltraZoom(**model_args)
 
+    model.add_weight_norms()
+
     print("Compiling model")
     model = torch.compile(model)
 
@@ -163,8 +165,11 @@ def main():
     perceptual_loss_function = PerceptualL2Loss().to(args.device)
     tv_loss_function = TVLoss()
 
+    print("Compiling embedding model")
+    perceptual_loss_function = torch.compile(perceptual_loss_function)
+
     print(
-        f"Perceptual embeddings model has {perceptual_loss_function.num_params:,} parameters"
+        f"Embedding model has {perceptual_loss_function.num_params:,} parameters"
     )
 
     optimizer = AdamW(model.parameters(), lr=args.learning_rate)

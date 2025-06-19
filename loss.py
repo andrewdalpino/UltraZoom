@@ -4,16 +4,16 @@ from torch import Tensor
 
 from torch.nn import Module, MSELoss
 
-from torchvision.models import vgg16, VGG16_Weights
+from torchvision.models import vgg19, VGG19_Weights
 
 
 class PerceptualL2Loss(Module):
-    """Perceptual loss based on the L2 loss between VGG16 embeddings."""
+    """Perceptual loss based on the L2 loss between VGG19 embeddings."""
 
     def __init__(self):
         super().__init__()
 
-        model = vgg16(weights=VGG16_Weights).features
+        model = vgg19(weights=VGG19_Weights.DEFAULT).features
 
         for param in model.parameters():
             param.requires_grad = False

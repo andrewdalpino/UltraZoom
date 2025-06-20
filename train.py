@@ -55,6 +55,7 @@ def main():
     parser.add_argument("--gradient_accumulation_steps", default=32, type=int)
     parser.add_argument("--num_epochs", default=100, type=int)
     parser.add_argument("--learning_rate", default=1e-4, type=float)
+    parser.add_argument("--task_sampling_temperature", default=1.0, type=float)
     parser.add_argument("--max_gradient_norm", default=10.0, type=float)
     parser.add_argument("--num_channels", default=128, type=int)
     parser.add_argument("--hidden_ratio", default=4, type=int)
@@ -219,7 +220,11 @@ def main():
                     ]
                 )
 
-                task_weights = softmax(torch.randn(3, device=args.device), dim=0)
+                r = torch.randn(3, device=args.device)
+
+                r /= args.task_sampling_temperature
+
+                task_weights = softmax(r, dim=0)
 
                 weighted_losses = task_weights * normalized_losses
 

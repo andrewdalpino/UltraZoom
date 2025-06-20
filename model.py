@@ -36,7 +36,7 @@ class UltraZoom(Module, PyTorchModelHubMixin):
         upscale_ratio: int,
         num_channels: int,
         hidden_ratio: int,
-        num_layers: int,
+        num_encoder_layers: int,
     ):
         super().__init__()
 
@@ -55,12 +55,14 @@ class UltraZoom(Module, PyTorchModelHubMixin):
                 f"Hidden ratio must be either 1, 2, or 4, {hidden_ratio} given."
             )
 
-        if num_layers < 1:
-            raise ValueError(f"Num layers must be greater than 0, {num_layers} given.")
+        if num_encoder_layers < 1:
+            raise ValueError(
+                f"Num layers must be greater than 0, {num_encoder_layers} given."
+            )
 
         self.skip = Upsample(scale_factor=upscale_ratio, mode="bicubic")
 
-        self.encoder = Encoder(num_channels, hidden_ratio, num_layers)
+        self.encoder = Encoder(num_channels, hidden_ratio, num_encoder_layers)
         self.decoder = Decoder(num_channels, upscale_ratio)
 
     @property
@@ -107,7 +109,11 @@ class Encoder(Module):
     def __init__(self, num_channels: int, hidden_ratio: int, num_layers: int):
         super().__init__()
 
-        self.input = Conv2d(3, num_channels, kernel_size=3, padding=1)
+        assert num_channels > 0, "Number of channels must be greater than 0."
+        assert hidden_ratio in {1, 2, 4}, "Hidden ratio must be either 1, 2, or 4."
+        assert num_layers > 0, "Number of layers must be greater than 0."
+
+        self.input = Conv2d(3, num_channels, kernel_size=1)
 
         self.body = Sequential(
             *[EncoderBlock(num_channels, hidden_ratio) for _ in range(num_layers)]
@@ -132,19 +138,23 @@ class EncoderBlock(Module):
 
         hidden_channels = hidden_ratio * num_channels
 
-        self.conv1 = Conv2d(num_channels, hidden_channels, kernel_size=3, padding=1)
-        self.conv2 = Conv2d(hidden_channels, num_channels, kernel_size=3, padding=1)
+        self.conv1 = Conv2d(num_channels, num_channels, kernel_size=7, padding=3)
+        self.conv2 = Conv2d(num_channels, hidden_channels, kernel_size=1)
+        self.conv3 = Conv2d(hidden_channels, num_channels, kernel_size=1)
 
         self.silu = SiLU()
 
     def forward(self, x: Tensor) -> Tensor:
+        s = x.clone()
+
         z = self.conv1.forward(x)
-        z = self.silu.forward(z)
         z = self.conv2.forward(z)
+        z = self.silu.forward(z)
+        z = self.conv3.forward(z)
 
-        z += x  # Local residual connection
+        s += z  # Local residual connection
 
-        return z
+        return s
 
 
 class Decoder(Module):

@@ -28,6 +28,8 @@ def main():
 
     model = UltraZoom(**checkpoint["model_args"])
 
+    model.add_weight_norms()
+
     print("Compiling model")
     model = torch.compile(model)
 

@@ -37,7 +37,7 @@ class PerceptualL2Loss(Module):
 
 
 class TVLoss(Module):
-    """Total variation (TV) penalty as a loss function."""
+    """Total variation (TV) regularizer as a loss function."""
 
     def __init__(self):
         super().__init__()
@@ -54,6 +54,6 @@ class TVLoss(Module):
         h_variance /= b * c * (h - 1) * w
         w_variance /= b * c * h * (w - 1)
 
-        penalty = w_variance + h_variance
+        loss = w_variance + h_variance
 
-        return penalty
+        return loss

@@ -1,6 +1,5 @@
 import random
 
-from os import path
 from argparse import ArgumentParser
 from functools import partial
 
@@ -8,6 +7,7 @@ import torch
 
 from torch.utils.data import DataLoader
 from torch.nn import MSELoss
+from torch.nn.functional import softmax
 from torch.nn.utils import clip_grad_norm_
 from torch.optim import AdamW
 from torch.amp import autocast
@@ -51,14 +51,14 @@ def main():
     parser.add_argument("--contrast_jitter", default=0.1, type=float)
     parser.add_argument("--saturation_jitter", default=0.1, type=float)
     parser.add_argument("--hue_jitter", default=0.1, type=float)
-    parser.add_argument("--batch_size", default=4, type=int)
-    parser.add_argument("--gradient_accumulation_steps", default=16, type=int)
+    parser.add_argument("--batch_size", default=2, type=int)
+    parser.add_argument("--gradient_accumulation_steps", default=32, type=int)
     parser.add_argument("--num_epochs", default=100, type=int)
     parser.add_argument("--learning_rate", default=1e-4, type=float)
-    parser.add_argument("--max_gradient_norm", default=1.0, type=float)
+    parser.add_argument("--max_gradient_norm", default=10.0, type=float)
     parser.add_argument("--num_channels", default=128, type=int)
     parser.add_argument("--hidden_ratio", default=4, type=int)
-    parser.add_argument("--num_layers", default=20, type=int)
+    parser.add_argument("--num_encoder_layers", default=30, type=int)
     parser.add_argument("--eval_interval", default=2, type=int)
     parser.add_argument("--checkpoint_interval", default=2, type=int)
     parser.add_argument(
@@ -147,7 +147,7 @@ def main():
         "upscale_ratio": args.upscale_ratio,
         "num_channels": args.num_channels,
         "hidden_ratio": args.hidden_ratio,
-        "num_layers": args.num_layers,
+        "num_encoder_layers": args.num_encoder_layers,
     }
 
     model = UltraZoom(**model_args)
@@ -168,9 +168,7 @@ def main():
     print("Compiling embedding model")
     perceptual_loss_function = torch.compile(perceptual_loss_function)
 
-    print(
-        f"Embedding model has {perceptual_loss_function.num_params:,} parameters"
-    )
+    print(f"Embedding model has {perceptual_loss_function.num_params:,} parameters")
 
     optimizer = AdamW(model.parameters(), lr=args.learning_rate)
 
@@ -213,15 +211,21 @@ def main():
                 perceptual_loss = perceptual_loss_function(y_pred, y)
                 tv_loss = tv_loss_function(y_pred)
 
-                normalized_loss = (
-                    l2_loss / l2_loss.detach()
-                    + perceptual_loss / perceptual_loss.detach()
-                    + tv_loss / tv_loss.detach()
+                normalized_losses = torch.stack(
+                    [
+                        l2_loss / l2_loss.detach(),
+                        perceptual_loss / perceptual_loss.detach(),
+                        tv_loss / tv_loss.detach(),
+                    ]
                 )
 
-                normalized_loss /= 3.0
+                task_weights = softmax(torch.randn(3, device=args.device), dim=0)
 
-                scaled_loss = normalized_loss / args.gradient_accumulation_steps
+                weighted_losses = task_weights * normalized_losses
+
+                loss = weighted_losses.sum()
+
+                scaled_loss = loss / args.gradient_accumulation_steps
 
             scaled_loss.backward()
 

@@ -2,6 +2,10 @@
 
 A fast singe image super-resolution (SISR) model for upscaling images without loss of detail. Ultra Zoom uses a two-stage "zoom in and enhance" strategy that first applies a deterministic upscaling algorithm to the image and then uses a deep neural network to fill in the details. As such, Ultra Zoom requires less memory and compute than upscalers that must necessarily predict every pixel. Despite its relative size, Ultra Zoom performs on par with much larger models.
 
+## Key Features
+
+- **Fast and scalable**: Instead of directly predicting the individual pixels of the upscaled image, SuperCool uses a fast deterministic upscaling algorithm and then fills in the missing details through a residual pathway that operates primarily within the low-resolution subspace. As such, the model is capable of being used for real-time image processing.
+
 ## Install Project Dependencies
 
 Project dependencies are specified in the `requirements.txt` file. You can install them with [pip](https://pip.pypa.io/en/stable/) using the following command from the project root. We recommend using a virtual environment such as `venv` to keep package dependencies on your system tidy.
@@ -103,6 +107,9 @@ python upscale.py --checkpoint_path="./checkpoints/fine-tuned.pt" --image_path="
 
 ## References
 
+>- Z. Liu, et al. A ConvNet for the 2020s, 2022.
+>- B. Lin, et al. A Closer Look At Loss Weighting In Multi-Task Learning, 2021.
 >- J. Yu, et al. Wide Activation for Efficient and Accurate Image Super-Resolution, 2018.
+>- J. Johnson, et al. Perceptual Losses for Real_time Style Transfer and Super-Resolution, 2016.
 >- W. Shi, et al. Real-Time Single Image and Video Super-Resolution Using an Efficient Sub-Pixel Convolutional Neural Network, 2016.
 >- T. Salimans, et al. Weight Normalization: A Simple Reparameterization to Accelerate Training of Deep Neural Networks, OpenAI, 2016.

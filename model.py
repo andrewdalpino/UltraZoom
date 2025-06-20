@@ -169,7 +169,7 @@ class Decoder(Module):
         channels_out = 3 * upscale_ratio**2
 
         self.subpixel_conv = Conv2d(
-            num_channels, channels_out, kernel_size=3, padding=1
+            num_channels, channels_out, kernel_size=7, padding=3
         )
 
         self.shuffle = PixelShuffle(upscale_ratio)

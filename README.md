@@ -1,10 +1,14 @@
 # Ultra Zoom
 
-A fast singe image super-resolution (SISR) model for upscaling images without loss of detail. Ultra Zoom uses a two-stage "zoom in and enhance" strategy that first applies a deterministic upscaling algorithm to the image and then uses a deep neural network to fill in the details. As such, Ultra Zoom requires less memory and compute than upscalers that must necessarily predict every pixel. Despite its relative size, Ultra Zoom performs on par with much larger models.
+A fast singe image super-resolution (SISR) model for upscaling images without loss of detail. Ultra Zoom uses a two-stage "zoom in and enhance" strategy that first applies a deterministic upscaling algorithm to the image and then uses a deep neural network to fill in the details. As such, Ultra Zoom requires less resources than upscalers that must necessarily predict every pixel - making it great for real-time image processing. Despite its relative size, Ultra Zoom performs on par with much larger models.
 
 ## Key Features
 
-- **Fast and scalable**: Instead of directly predicting the individual pixels of the upscaled image, SuperCool uses a fast deterministic upscaling algorithm and then fills in the missing details through a residual pathway that operates primarily within the low-resolution subspace. As such, the model is capable of being used for real-time image processing.
+- **Fast and scalable**: Instead of directly predicting the individual pixels of the upscaled image, Ultra Zoom uses a fast deterministic upscaling algorithm and then enhances the image through a residual pathway that operates primarily within the low-resolution subspace of a deep neural network.
+
+- **Next-gen architecture**: Ultra Zoom employs a next-generation Convolutional neural network architecture that performs better than previous generations by employing large depthwise separable filters, wide activations, and a sub-pixel convolutional decoder.
+
+- **Optimized for perception**: Not only do we train Ultra Zoom to generate new pixels but also to choose those pixels in such a way that maintains the perceptual quality of the original image.
 
 ## Pretrained Models
 
@@ -12,7 +16,7 @@ The following pretrained models are available on HuggingFace Hub.
 
 | Name | Base Upscaler | Num Channels | Hidden Ratio | Encoder Layers | Total Parameters |
 |---|---|---|---|---|---|
-| andrewdalpino/UltraZoom-2X | bicubic | 128 | 4 | 12 | 11M |
+| andrewdalpino/UltraZoom-2X | bicubic | 64 | 2 | 16 | 2.5M |
 
 ## Install Project Dependencies
 
@@ -26,7 +30,7 @@ source ./.venv/bin/activate
 pip install -r requirements.txt
 ```
 
-## Pretraining
+## Training
 
 To start training with the default settings, add your training and testing images to the `./dataset/train` and `./dataset/test` folders respectively and call the pretraining script like in the example below. If you are looking for good training sets to start with we recommend the `DIV2K` and/or `Flicker2K` datasets.
 
@@ -79,10 +83,11 @@ Then navigate to the dashboard using your favorite web browser.
 | --gradient_accumulation_steps | 32 | int | The number of batches to pass through the network before updating the model weights. |
 | --num_epochs | 100 | int | The number of epochs to train for. |
 | --learning_rate | 1e-4 | float | The learning rate of the Adafactor optimizer. |
-| --max_gradient_norm | 1.0 | float | Clip gradients above this threshold norm before stepping. |
-| --num_channels | 128 | int | The number of channels within each encoder block. |
-| --hidden_ratio | 4 | (1, 2, 4) | The ratio of hidden channels to `num_channels` within the activation portion of each encoder block. |
-| --num_encoder_layers | 12 | int | The number of layers within the body of the encoder. |
+| --max_gradient_norm | 2.0 | float | Clip gradients above this threshold norm before stepping. |
+| --num_channels | 64 | int | The number of channels within each encoder block. |
+| --hidden_ratio | 2 | (1, 2, 4) | The ratio of hidden channels to `num_channels` within the activation portion of each encoder block. |
+| --num_encoder_layers | 16 | int | The number of layers within the body of the encoder. |
+| --activation_checkpointing | False | bool | Should we use activation checkpointing? This will drastically reduce memory utilization during training at the cost of recomputing the forward pass. |
 | --eval_interval | 2 | int | Evaluate the model after this many epochs on the testing set. |
 | --checkpoint_interval | 2 | int | Save the model checkpoint to disk every this many epochs. |
 | --checkpoint_path | "./checkpoints/checkpoint.pt" | str | The path to the base checkpoint file on disk. |
@@ -114,6 +119,7 @@ python upscale.py --checkpoint_path="./checkpoints/fine-tuned.pt" --image_path="
 | --device | "cuda" | str | The device to run the computation on. |
 
 ## References
+
 
 >- Z. Liu, et al. A ConvNet for the 2020s, 2022.
 >- J. Yu, et al. Wide Activation for Efficient and Accurate Image Super-Resolution, 2018.

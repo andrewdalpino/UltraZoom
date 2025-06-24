@@ -1,30 +1,32 @@
+from functools import partial
+
 import torch
 
 from torch import Tensor
 
 from torch.nn import (
     Module,
-    Sequential,
-    Conv2d,
-    SiLU,
+    ModuleList,
     Upsample,
+    Conv2d,
+    Sigmoid,
+    SiLU,
     PixelShuffle,
 )
 
 from torch.nn.utils.parametrizations import weight_norm
 from torch.nn.utils.parametrize import remove_parametrizations
+from torch.utils.checkpoint import checkpoint as torch_checkpoint
 
 from huggingface_hub import PyTorchModelHubMixin
 
 
 class UltraZoom(Module, PyTorchModelHubMixin):
     """
-    A fast single-image super-resolution model with a deep low-resolution encoder network
-    and high-resolution sub-pixel convolutional decoder head with global residual pathway.
-
-    Ultra Zoom uses a "zoom in and enhance" approach to upscale images by first increasing
-    the resolution of the input image using bicubic interpolation and then filling in the
-    details using a deep neural network.
+    A fast single-image super-resolution model. Ultra Zoom uses a "zoom in and enhance"
+    approach to upscale images by first increasing the resolution of the input image
+    using bicubic interpolation and then filling in the details using a deep neural
+    network.
     """
 
     AVAILABLE_UPSCALE_RATIOS = {2, 4, 8}
@@ -94,9 +96,9 @@ class UltraZoom(Module, PyTorchModelHubMixin):
         z = self.encoder.forward(x)
         z = self.decoder.forward(z)
 
-        s += z  # Global residual connection
+        z = s + z  # Global residual connection
 
-        return s
+        return z
 
     @torch.no_grad()
     def upscale(self, x: Tensor) -> Tensor:
@@ -115,22 +117,96 @@ class Encoder(Module):
         assert hidden_ratio in {1, 2, 4}, "Hidden ratio must be either 1, 2, or 4."
         assert num_layers > 0, "Number of layers must be greater than 0."
 
-        self.stem = Conv2d(3, num_channels, kernel_size=1)
+        self.stem = Conv2d(3, num_channels, kernel_size=11, padding=5)
 
-        self.body = Sequential(
-            *[EncoderBlock(num_channels, hidden_ratio) for _ in range(num_layers)]
+        self.body = ModuleList(
+            [EncoderBlock(num_channels, hidden_ratio) for _ in range(num_layers)]
         )
+
+        self.checkpoint = lambda layer, x: layer(x)
+
+    def enable_activation_checkpointing(self) -> None:
+        """
+        Instead of memorizing the activations of the forward pass, recompute them
+        at every encoder block.
+        """
+
+        self.checkpoint = partial(torch_checkpoint, use_reentrant=False)
 
     def forward(self, x: Tensor) -> Tensor:
         z = self.stem.forward(x)
 
-        z = self.body.forward(z)
+        for layer in self.body:
+            z = self.checkpoint(layer, z)
 
         return z
 
 
 class EncoderBlock(Module):
-    """A low-resolution encoder block using depth-wise separable convolutions."""
+    """
+    A low-resolution encoder block using large depth-wise separable convolutions
+    with element-wise attention and inverted bottleneck layers.
+    """
+
+    def __init__(self, num_channels: int, hidden_ratio: int):
+        super().__init__()
+
+        self.stage1 = DepthwiseSeparableConv2dWithAttention(num_channels)
+        self.stage2 = InvertedBottleneck(num_channels, hidden_ratio)
+
+    def forward(self, x: Tensor) -> Tensor:
+        z = self.stage1.forward(x)
+        z = self.stage2.forward(z)
+
+        z = x + z  # Local residual connection
+
+        return z
+
+
+class DepthwiseSeparableConv2dWithAttention(Module):
+    """
+    A depth-wise separable convolution layer with a large field-of-view and
+    element-wise attention.
+    """
+
+    def __init__(self, num_channels: int):
+        super().__init__()
+
+        assert num_channels > 0, "Number of channels must be greater than 0."
+
+        self.depthwise = Conv2d(
+            num_channels, num_channels, kernel_size=7, padding=3, groups=num_channels
+        )
+
+        self.attention = ElementwiseAttention(num_channels)
+
+        self.pointwise = Conv2d(num_channels, num_channels, kernel_size=1)
+
+    def forward(self, x: Tensor) -> Tensor:
+        z = self.depthwise.forward(x)
+        z = self.attention.forward(z)
+        z = self.pointwise.forward(z)
+
+        return z
+
+
+class ElementwiseAttention(Module):
+    def __init__(self, num_channels: int):
+        super().__init__()
+
+        self.conv = Conv2d(num_channels, num_channels, kernel_size=3, padding=1)
+
+        self.sigmoid = Sigmoid()
+
+    def forward(self, x: Tensor) -> Tensor:
+        z = self.conv.forward(x)
+        z = self.sigmoid.forward(z)
+
+        return z * x
+
+
+class InvertedBottleneck(Module):
+    """An inverted bottleneck layer with SiLU activation."""
 
     def __init__(self, num_channels: int, hidden_ratio: int):
         super().__init__()
@@ -138,58 +214,23 @@ class EncoderBlock(Module):
         assert num_channels > 0, "Number of channels must be greater than 0."
         assert hidden_ratio in {1, 2, 4}, "Hidden ratio must be either 1, 2, or 4."
 
-        self.conv1 = DepthwiseSeparableConv2d(
-            num_channels, num_channels, kernel_size=7, padding=3
-        )
-
         hidden_channels = hidden_ratio * num_channels
 
-        self.conv2 = Conv2d(num_channels, hidden_channels, kernel_size=3, padding=1)
-        self.conv3 = Conv2d(hidden_channels, num_channels, kernel_size=3, padding=1)
+        self.conv1 = Conv2d(num_channels, hidden_channels, kernel_size=3, padding=1)
+        self.conv2 = Conv2d(hidden_channels, num_channels, kernel_size=3, padding=1)
 
         self.silu = SiLU()
 
     def forward(self, x: Tensor) -> Tensor:
-        s = x.clone()
-
         z = self.conv1.forward(x)
-
-        z = self.conv2.forward(z)
         z = self.silu.forward(z)
-        z = self.conv3.forward(z)
-
-        s += z  # Local residual connection
-
-        return s
-
-
-class DepthwiseSeparableConv2d(Module):
-    """A depth-wise separable convolution layer."""
-
-    def __init__(
-        self, in_channels: int, out_channels: int, kernel_size: int, padding: int
-    ):
-        super().__init__()
-
-        self.depthwise = Conv2d(
-            in_channels,
-            in_channels,
-            kernel_size=kernel_size,
-            padding=padding,
-            groups=in_channels,
-        )
-
-        self.pointwise = Conv2d(in_channels, out_channels, kernel_size=1)
-
-    def forward(self, x: Tensor) -> Tensor:
-        z = self.depthwise.forward(x)
-        z = self.pointwise.forward(z)
+        z = self.conv2.forward(z)
 
         return z
 
 
 class Decoder(Module):
-    """A high-resolution decoder head with sub-pixel convolution and pixel shuffling."""
+    """A high-resolution decoder head with sub-pixel convolution."""
 
     def __init__(self, num_channels: int, upscale_ratio: int):
         super().__init__()

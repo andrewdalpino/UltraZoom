@@ -7,7 +7,6 @@ import torch
 
 from torch.utils.data import DataLoader
 from torch.nn import MSELoss
-from torch.nn.functional import softmax
 from torch.nn.utils import clip_grad_norm_
 from torch.optim import AdamW
 from torch.amp import autocast
@@ -29,7 +28,7 @@ from torchmetrics.image import (
 
 from data import ImageFolder
 from model import UltraZoom
-from loss import PerceptualL2Loss, TVLoss
+from loss import VGGLoss, TVLoss
 
 from tqdm import tqdm
 
@@ -51,15 +50,14 @@ def main():
     parser.add_argument("--contrast_jitter", default=0.1, type=float)
     parser.add_argument("--saturation_jitter", default=0.1, type=float)
     parser.add_argument("--hue_jitter", default=0.1, type=float)
-    parser.add_argument("--batch_size", default=2, type=int)
+    parser.add_argument("--batch_size", default=4, type=int)
     parser.add_argument("--gradient_accumulation_steps", default=32, type=int)
     parser.add_argument("--num_epochs", default=100, type=int)
     parser.add_argument("--learning_rate", default=1e-4, type=float)
-    parser.add_argument("--task_sampling_temperature", default=1.0, type=float)
-    parser.add_argument("--max_gradient_norm", default=10.0, type=float)
-    parser.add_argument("--num_channels", default=128, type=int)
-    parser.add_argument("--hidden_ratio", default=4, type=int)
-    parser.add_argument("--num_encoder_layers", default=30, type=int)
+    parser.add_argument("--max_gradient_norm", default=2.0, type=float)
+    parser.add_argument("--num_channels", default=64, type=int)
+    parser.add_argument("--hidden_ratio", default=2, type=int)
+    parser.add_argument("--num_encoder_layers", default=16, type=int)
     parser.add_argument("--eval_interval", default=2, type=int)
     parser.add_argument("--checkpoint_interval", default=2, type=int)
     parser.add_argument(
@@ -163,13 +161,13 @@ def main():
     model = model.to(args.device)
 
     l2_loss_function = MSELoss()
-    perceptual_loss_function = PerceptualL2Loss().to(args.device)
+    vgg_loss_function = VGGLoss().to(args.device)
     tv_loss_function = TVLoss()
 
     print("Compiling embedding model")
-    perceptual_loss_function = torch.compile(perceptual_loss_function)
+    vgg_loss_function = torch.compile(vgg_loss_function)
 
-    print(f"Embedding model has {perceptual_loss_function.num_params:,} parameters")
+    print(f"Embedding model has {vgg_loss_function.num_params:,} parameters")
 
     optimizer = AdamW(model.parameters(), lr=args.learning_rate)
 
@@ -195,9 +193,10 @@ def main():
     model.train()
 
     for epoch in range(starting_epoch, args.num_epochs + 1):
-        total_l2_loss, total_perceptual_loss = 0.0, 0.0
-        total_tv_loss, total_gradient_norm = 0.0, 0.0
+        total_l2_loss, total_vgg22_loss = 0.0, 0.0
+        total_tv_loss, total_vgg54_loss = 0.0, 0.0
         total_batches, total_steps = 0, 0
+        total_gradient_norm = 0.0
 
         for step, (x, y) in enumerate(
             tqdm(train_loader, desc=f"Epoch {epoch}", leave=False), start=1
@@ -209,28 +208,19 @@ def main():
                 y_pred = model.forward(x)
 
                 l2_loss = l2_loss_function(y_pred, y)
-                perceptual_loss = perceptual_loss_function(y_pred, y)
+                vgg22_loss, vgg54_loss = vgg_loss_function(y_pred, y)
                 tv_loss = tv_loss_function(y_pred)
 
-                normalized_losses = torch.stack(
-                    [
-                        l2_loss / l2_loss.detach(),
-                        perceptual_loss / perceptual_loss.detach(),
-                        tv_loss / tv_loss.detach(),
-                    ]
+                combined_loss = (
+                    l2_loss / l2_loss.detach()
+                    + vgg22_loss / vgg22_loss.detach()
+                    + vgg54_loss / vgg54_loss.detach()
+                    + tv_loss / tv_loss.detach()
                 )
 
-                r = torch.randn(3, device=args.device)
+                combined_loss /= 4.0
 
-                r /= args.task_sampling_temperature
-
-                task_weights = softmax(r, dim=0)
-
-                weighted_losses = task_weights * normalized_losses
-
-                loss = weighted_losses.sum()
-
-                scaled_loss = loss / args.gradient_accumulation_steps
+                scaled_loss = combined_loss / args.gradient_accumulation_steps
 
             scaled_loss.backward()
 
@@ -246,25 +236,29 @@ def main():
                 total_steps += 1
 
             total_l2_loss += l2_loss.item()
-            total_perceptual_loss += perceptual_loss.item()
+            total_vgg22_loss += vgg22_loss.item()
+            total_vgg54_loss += vgg54_loss.item()
             total_tv_loss += tv_loss.item()
 
             total_batches += 1
 
         average_l2_loss = total_l2_loss / total_batches
-        average_perceptual_loss = total_perceptual_loss / total_batches
+        average_vgg22_loss = total_vgg22_loss / total_batches
+        average_vgg54_loss = total_vgg54_loss / total_batches
         average_tv_loss = total_tv_loss / total_batches
         average_gradient_norm = total_gradient_norm / total_steps
 
-        logger.add_scalar("Reconstruction L2", average_l2_loss, epoch)
-        logger.add_scalar("Perceptual L2", average_perceptual_loss, epoch)
+        logger.add_scalar("Pixel L2", average_l2_loss, epoch)
+        logger.add_scalar("VGG22 L2", average_vgg22_loss, epoch)
+        logger.add_scalar("VGG54 L2", average_vgg54_loss, epoch)
         logger.add_scalar("TV Loss", average_tv_loss, epoch)
         logger.add_scalar("Gradient Norm", average_gradient_norm, epoch)
 
         print(
             f"Epoch {epoch}:",
-            f"Reconstruction L2: {average_l2_loss:.5},",
-            f"Perceptual L2: {average_perceptual_loss:.5},",
+            f"Pixel L2: {average_l2_loss:.5},",
+            f"VGG22 L2: {average_vgg22_loss:.5},",
+            f"VGG54 L2: {average_vgg54_loss:.5},",
             f"TV Loss: {average_tv_loss:.5},",
             f"Gradient Norm: {average_gradient_norm:.4}",
         )

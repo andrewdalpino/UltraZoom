@@ -2,10 +2,17 @@ from argparse import ArgumentParser
 
 import torch
 
+from torch.nn import Upsample
 from torchvision.io import decode_image
-from torchvision.transforms.v2 import ToDtype, ToPILImage
+from torchvision.transforms.v2 import ToDtype
+from torchvision.utils import make_grid
 
 from model import UltraZoom
+
+import matplotlib
+import matplotlib.pyplot as plt
+
+matplotlib.use("qt5agg")
 
 
 def main():
@@ -39,24 +46,37 @@ def main():
 
     model.remove_weight_norms()
 
-    print("Model checkpoint loaded successfully")
-
     model.eval()
 
+    print("Model checkpoint loaded successfully")
+
+    upscale_transform = Upsample(scale_factor=model.upscale_ratio, mode="bicubic")
+
     image_to_tensor = ToDtype(torch.float32, scale=True)
-    tensor_to_image = ToPILImage()
 
     image = decode_image(args.image_path, mode="RGB")
 
     x = image_to_tensor(image).unsqueeze(0).to(args.device)
 
     print("Upscaling ...")
+    y_interpolated = upscale_transform(x)
+
+    y_interpolated = torch.clamp(y_interpolated, 0, 1)
 
     y_pred = model.upscale(x)
 
-    image = tensor_to_image(y_pred.squeeze())
+    pair = torch.stack(
+        [
+            y_interpolated.squeeze(0),
+            y_pred.squeeze(0),
+        ],
+        dim=0,
+    )
 
-    image.show()
+    grid = make_grid(pair, nrow=2)
+
+    plt.imshow(grid.permute(1, 2, 0))
+    plt.show()
 
 
 if __name__ == "__main__":

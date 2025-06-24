@@ -65,6 +65,8 @@ class UltraZoom(Module, PyTorchModelHubMixin):
         self.encoder = Encoder(num_channels, hidden_ratio, num_encoder_layers)
         self.decoder = Decoder(num_channels, upscale_ratio)
 
+        self.upscale_ratio = upscale_ratio
+
     @property
     def num_trainable_params(self) -> int:
         return sum(param.numel() for param in self.parameters() if param.requires_grad)
@@ -113,14 +115,14 @@ class Encoder(Module):
         assert hidden_ratio in {1, 2, 4}, "Hidden ratio must be either 1, 2, or 4."
         assert num_layers > 0, "Number of layers must be greater than 0."
 
-        self.input = Conv2d(3, num_channels, kernel_size=1)
+        self.stem = Conv2d(3, num_channels, kernel_size=1)
 
         self.body = Sequential(
             *[EncoderBlock(num_channels, hidden_ratio) for _ in range(num_layers)]
         )
 
     def forward(self, x: Tensor) -> Tensor:
-        z = self.input.forward(x)
+        z = self.stem.forward(x)
 
         z = self.body.forward(z)
 
@@ -128,7 +130,7 @@ class Encoder(Module):
 
 
 class EncoderBlock(Module):
-    """A low-resolution encoder block with {num_channels} feature maps and wide activations."""
+    """A low-resolution encoder block using depth-wise separable convolutions."""
 
     def __init__(self, num_channels: int, hidden_ratio: int):
         super().__init__()
@@ -136,11 +138,14 @@ class EncoderBlock(Module):
         assert num_channels > 0, "Number of channels must be greater than 0."
         assert hidden_ratio in {1, 2, 4}, "Hidden ratio must be either 1, 2, or 4."
 
+        self.conv1 = DepthwiseSeparableConv2d(
+            num_channels, num_channels, kernel_size=7, padding=3
+        )
+
         hidden_channels = hidden_ratio * num_channels
 
-        self.conv1 = Conv2d(num_channels, num_channels, kernel_size=7, padding=3)
-        self.conv2 = Conv2d(num_channels, hidden_channels, kernel_size=1)
-        self.conv3 = Conv2d(hidden_channels, num_channels, kernel_size=1)
+        self.conv2 = Conv2d(num_channels, hidden_channels, kernel_size=3, padding=1)
+        self.conv3 = Conv2d(hidden_channels, num_channels, kernel_size=3, padding=1)
 
         self.silu = SiLU()
 
@@ -148,6 +153,7 @@ class EncoderBlock(Module):
         s = x.clone()
 
         z = self.conv1.forward(x)
+
         z = self.conv2.forward(z)
         z = self.silu.forward(z)
         z = self.conv3.forward(z)
@@ -157,26 +163,72 @@ class EncoderBlock(Module):
         return s
 
 
+class DepthwiseSeparableConv2d(Module):
+    """A depth-wise separable convolution layer."""
+
+    def __init__(
+        self, in_channels: int, out_channels: int, kernel_size: int, padding: int
+    ):
+        super().__init__()
+
+        self.depthwise = Conv2d(
+            in_channels,
+            in_channels,
+            kernel_size=kernel_size,
+            padding=padding,
+            groups=in_channels,
+        )
+
+        self.pointwise = Conv2d(in_channels, out_channels, kernel_size=1)
+
+    def forward(self, x: Tensor) -> Tensor:
+        z = self.depthwise.forward(x)
+        z = self.pointwise.forward(z)
+
+        return z
+
+
 class Decoder(Module):
     """A high-resolution decoder head with sub-pixel convolution and pixel shuffling."""
 
     def __init__(self, num_channels: int, upscale_ratio: int):
         super().__init__()
 
-        assert num_channels > 0, "Number of channels must be greater than 0."
-        assert upscale_ratio in {2, 4, 8}, "Upscale ratio must be either 2, 4, or 8."
-
-        channels_out = 3 * upscale_ratio**2
-
-        self.subpixel_conv = Conv2d(
-            num_channels, channels_out, kernel_size=7, padding=3
+        self.conv = SubPixelConv2d(
+            num_channels,
+            num_channels,
+            upscale_ratio=upscale_ratio,
+            kernel_size=3,
+            padding=1,
         )
 
         self.shuffle = PixelShuffle(upscale_ratio)
 
     def forward(self, x: Tensor) -> Tensor:
-        z = self.subpixel_conv.forward(x)
-
+        z = self.conv.forward(x)
         z = self.shuffle.forward(z)
 
         return z
+
+
+class SubPixelConv2d(Module):
+    def __init__(
+        self,
+        in_channels: int,
+        out_channels: int,
+        upscale_ratio: int,
+        kernel_size: int,
+        padding: int,
+    ):
+        super().__init__()
+
+        assert upscale_ratio in {2, 4, 8}, "Upscale ratio must be either 2, 4, or 8."
+
+        out_channels = 3 * upscale_ratio**2
+
+        self.conv = Conv2d(
+            in_channels, out_channels, kernel_size=kernel_size, padding=padding
+        )
+
+    def forward(self, x: Tensor) -> Tensor:
+        return self.conv.forward(x)

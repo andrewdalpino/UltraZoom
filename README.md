@@ -6,6 +6,14 @@ A fast singe image super-resolution (SISR) model for upscaling images without lo
 
 - **Fast and scalable**: Instead of directly predicting the individual pixels of the upscaled image, SuperCool uses a fast deterministic upscaling algorithm and then fills in the missing details through a residual pathway that operates primarily within the low-resolution subspace. As such, the model is capable of being used for real-time image processing.
 
+## Pretrained Models
+
+The following pretrained models are available on HuggingFace Hub.
+
+| Name | Base Upscaler | Num Channels | Hidden Ratio | Encoder Layers | Total Parameters |
+|---|---|---|---|---|---|
+| andrewdalpino/UltraZoom-2X | bicubic | 128 | 4 | 12 | 11M |
+
 ## Install Project Dependencies
 
 Project dependencies are specified in the `requirements.txt` file. You can install them with [pip](https://pip.pypa.io/en/stable/) using the following command from the project root. We recommend using a virtual environment such as `venv` to keep package dependencies on your system tidy.
@@ -62,19 +70,19 @@ Then navigate to the dashboard using your favorite web browser.
 | --test_images_path | "./dataset/test" | str | The path to the folder containing your testing images. |
 | --num_dataset_processes | 2 | int | The number of CPU processes to use to preprocess the dataset. |
 | --target_resolution | 512 | int | The number of pixels in the height and width dimensions of the training images. |
-| --upscale_ratio | 4 | (2, 4, 8) | The upscaling factor. |
+| --upscale_ratio | 2 | (2, 4, 8) | The upscaling or zoom factor. |
 | --brightness_jitter | 0.1 | float | The amount of jitter applied to the brightness of the training images. |
 | --contrast_jitter | 0.1 | float | The amount of jitter applied to the contrast of the training images. |
 | --saturation_jitter | 0.1 | float | The amount of jitter applied to the saturation of the training images. |
 | --hue_jitter | 0.1 | float | The amount of jitter applied to the hue of the training images. |
-| --batch_size | 2 | int | The number of training images to pass through the network at a time. |
+| --batch_size | 4 | int | The number of training images to pass through the network at a time. |
 | --gradient_accumulation_steps | 32 | int | The number of batches to pass through the network before updating the model weights. |
 | --num_epochs | 100 | int | The number of epochs to train for. |
 | --learning_rate | 1e-4 | float | The learning rate of the Adafactor optimizer. |
-| --max_gradient_norm | 10.0 | float | Clip gradients above this threshold norm before stepping. |
+| --max_gradient_norm | 1.0 | float | Clip gradients above this threshold norm before stepping. |
 | --num_channels | 128 | int | The number of channels within each encoder block. |
 | --hidden_ratio | 4 | (1, 2, 4) | The ratio of hidden channels to `num_channels` within the activation portion of each encoder block. |
-| --num_encoder_layers | 20 | int | The number of layers within the body of the encoder. |
+| --num_encoder_layers | 12 | int | The number of layers within the body of the encoder. |
 | --eval_interval | 2 | int | Evaluate the model after this many epochs on the testing set. |
 | --checkpoint_interval | 2 | int | Save the model checkpoint to disk every this many epochs. |
 | --checkpoint_path | "./checkpoints/checkpoint.pt" | str | The path to the base checkpoint file on disk. |
@@ -108,7 +116,6 @@ python upscale.py --checkpoint_path="./checkpoints/fine-tuned.pt" --image_path="
 ## References
 
 >- Z. Liu, et al. A ConvNet for the 2020s, 2022.
->- B. Lin, et al. A Closer Look At Loss Weighting In Multi-Task Learning, 2021.
 >- J. Yu, et al. Wide Activation for Efficient and Accurate Image Super-Resolution, 2018.
 >- J. Johnson, et al. Perceptual Losses for Real_time Style Transfer and Super-Resolution, 2016.
 >- W. Shi, et al. Real-Time Single Image and Video Super-Resolution Using an Efficient Sub-Pixel Convolutional Neural Network, 2016.

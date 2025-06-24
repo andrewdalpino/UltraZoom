@@ -7,33 +7,48 @@ from torch.nn import Module, MSELoss
 from torchvision.models import vgg19, VGG19_Weights
 
 
-class PerceptualL2Loss(Module):
-    """Perceptual loss based on the L2 loss between VGG19 embeddings."""
+class VGGLoss(Module):
+    """
+    Perceptual loss based on the L2 loss between VGG embeddings focusing on
+    both low-level and higher-order feature maps.
+    """
 
     def __init__(self):
         super().__init__()
 
-        model = vgg19(weights=VGG19_Weights.DEFAULT).features
+        model = vgg19(weights=VGG19_Weights.DEFAULT)
 
         for param in model.parameters():
             param.requires_grad = False
 
         model.eval()
 
-        self.model = model
+        self.vgg22 = model.features[0:9]
+        self.vgg54 = model.features[9:36]
+
         self.mse = MSELoss()
 
     @property
     def num_params(self) -> int:
-        return sum(param.numel() for param in self.model.parameters())
+        num_params = 0
 
-    def forward(self, y_pred: Tensor, y: Tensor) -> Tensor:
-        input_embeddings = self.model.forward(y_pred)
-        target_embeddings = self.model.forward(y)
+        for module in (self.vgg22, self.vgg54):
+            num_params += sum(param.numel() for param in module.parameters())
 
-        loss = self.mse(input_embeddings, target_embeddings)
+        return num_params
 
-        return loss
+    def forward(self, y_pred: Tensor, y: Tensor) -> tuple[Tensor, Tensor]:
+        input = self.vgg22.forward(y_pred)
+        target = self.vgg22.forward(y)
+
+        vgg22_loss = self.mse(input, target)
+
+        input = self.vgg54.forward(input)
+        target = self.vgg54.forward(target)
+
+        vgg54_loss = self.mse(input, target)
+
+        return vgg22_loss, vgg54_loss
 
 
 class TVLoss(Module):

@@ -56,6 +56,7 @@ def main():
     parser.add_argument("--learning_rate", default=1e-4, type=float)
     parser.add_argument("--max_gradient_norm", default=2.0, type=float)
     parser.add_argument("--num_channels", default=64, type=int)
+    parser.add_argument("--num_filters", default=8, type=int)
     parser.add_argument("--hidden_ratio", default=2, type=int)
     parser.add_argument("--num_encoder_layers", default=16, type=int)
     parser.add_argument("--activation_checkpointing", action="store_true")
@@ -145,6 +146,7 @@ def main():
     model_args = {
         "upscale_ratio": args.upscale_ratio,
         "num_channels": args.num_channels,
+        "num_filters": args.num_filters,
         "hidden_ratio": args.hidden_ratio,
         "num_encoder_layers": args.num_encoder_layers,
     }
@@ -259,10 +261,10 @@ def main():
 
         print(
             f"Epoch {epoch}:",
-            f"Pixel L2: {average_l2_loss:.5},",
-            f"VGG22 L2: {average_vgg22_loss:.5},",
-            f"VGG54 L2: {average_vgg54_loss:.5},",
-            f"TV Loss: {average_tv_loss:.5},",
+            f"Pixel L2: {average_l2_loss:.4},",
+            f"VGG22 L2: {average_vgg22_loss:.4},",
+            f"VGG54 L2: {average_vgg54_loss:.4},",
+            f"TV Loss: {average_tv_loss:.4},",
             f"Gradient Norm: {average_gradient_norm:.4}",
         )
 

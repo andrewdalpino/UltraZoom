@@ -53,10 +53,16 @@ class UltraZoom(Module, PyTorchModelHubMixin):
             raise ValueError(
                 f"Num channels must be greater than 0, {num_channels} given."
             )
-        
+
         if num_filters < 1:
             raise ValueError(
                 f"Num filters must be greater than 0, {num_filters} given."
+            )
+
+        if num_channels % num_filters != 0:
+            raise ValueError(
+                "Num channels must be divisible by num filters, "
+                f"{num_channels} channels and {num_filters} filters given."
             )
 
         if hidden_ratio not in self.AVAILABLE_HIDDEN_RATIOS:

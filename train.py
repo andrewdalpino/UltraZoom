@@ -120,7 +120,9 @@ def main():
 
     pre_transformer = Compose(
         [
-            RandomResizedCrop(args.target_resolution),
+            RandomResizedCrop(
+                args.target_resolution, scale=(0.8, 1.0), interpolation="bicubic"
+            ),
             ColorJitter(
                 brightness=args.brightness_jitter,
                 contrast=args.contrast_jitter,

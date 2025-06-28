@@ -10,10 +10,13 @@ from torchvision.io import decode_image
 from torchvision.transforms.v2 import (
     Transform,
     Compose,
+    RandomChoice,
     Resize,
     CenterCrop,
     ToDtype,
 )
+
+from torchvision.transforms.v2.functional import InterpolationMode
 
 from PIL import Image
 
@@ -31,6 +34,8 @@ class ImageFolder(Dataset):
         upscale_ratio: int,
         target_resolution: int,
         pre_transformer: Transform | None = None,
+        min_jpeg_quality: int = 50,
+        max_jpeg_quality: int = 100,
     ):
         if upscale_ratio not in UltraZoom.AVAILABLE_UPSCALE_RATIOS:
             raise ValueError(
@@ -71,14 +76,26 @@ class ImageFolder(Dataset):
 
         input_transformer = Compose(
             [
-                Resize(input_resolution),
+                RandomChoice(
+                    [
+                        Resize(
+                            input_resolution, interpolation=InterpolationMode.BICUBIC
+                        ),
+                        Resize(
+                            input_resolution, interpolation=InterpolationMode.BILINEAR
+                        ),
+                        Resize(
+                            input_resolution, interpolation=InterpolationMode.NEAREST
+                        ),
+                    ]
+                ),
                 CenterCrop(input_resolution),
             ]
         )
 
         target_transformer = Compose(
             [
-                Resize(target_resolution),
+                Resize(target_resolution, interpolation=InterpolationMode.BICUBIC),
                 CenterCrop(target_resolution),
             ]
         )

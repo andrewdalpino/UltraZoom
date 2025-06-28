@@ -1,22 +1,22 @@
 # Ultra Zoom
 
-A fast singe image super-resolution (SISR) model for upscaling images without loss of detail. Ultra Zoom uses a two-stage "zoom in and enhance" strategy that first applies a deterministic upscaling algorithm to the image and then uses a deep neural network to fill in the details. As such, Ultra Zoom requires less resources than upscalers that must necessarily predict every pixel - making it great for real-time image processing. Despite its relative size, Ultra Zoom performs on par with much larger models.
+A fast singe image super-resolution (SISR) model for upscaling images without loss of detail. Ultra Zoom uses a two-stage "zoom in and enhance" strategy that first applies a deterministic upscaling algorithm to the image and then uses a deep neural network to fill in the details. As such, Ultra Zoom requires less resources than upscalers that  necessarily predict every new pixel de novo - making it outstanding for real-time image processing. Despite its relative size, Ultra Zoom performs on par with much larger models.
 
 ## Key Features
 
 - **Fast and scalable**: Instead of directly predicting the individual pixels of the upscaled image, Ultra Zoom uses a fast deterministic upscaling algorithm and then enhances the image through a residual pathway that operates primarily within the low-resolution subspace of a deep neural network.
 
-- **Next-gen architecture**: Ultra Zoom employs a next-generation Convolutional neural network architecture that performs better than previous generations by employing large depthwise separable filters, wide activations, and a sub-pixel convolutional decoder.
+- **Next-gen architecture**: Ultra Zoom employs a next-generation Convolutional neural network architecture that performs better than previous generations by employing large group-wise filters, wide activations, and a sub-pixel convolutional decoder.
 
-- **Optimized for perception**: Not only do we train Ultra Zoom to generate new pixels but also to choose those pixels in such a way that maintains the perceptual quality of the original image.
+- **Optimized for perception**: Trained using two additional dynamically-weighted perceptual losses (VGG22 and VGG54) that guide the model to reconstruct both low-level and high-level features.
 
 ## Pretrained Models
 
 The following pretrained models are available on HuggingFace Hub.
 
-| Name | Base Upscaler | Num Channels | Hidden Ratio | Encoder Layers | Total Parameters |
+| Name | Num Channels | Num Filters | Hidden Ratio | Encoder Layers | Total Parameters |
 |---|---|---|---|---|---|
-| andrewdalpino/UltraZoom-2X | bicubic | 64 | 2 | 16 | 2.5M |
+| andrewdalpino/UltraZoom-2X | 128 | 8 | 4 | 12 | 2.25M |
 
 ## Install Project Dependencies
 
@@ -41,7 +41,7 @@ python train.py
 You can customize the upscaler model by adjusting the `num_channels`, `hidden_ratio`, and `num_encoder_layers` hyper-parameters like in the example below.
 
 ```
-python train.py --num_channels=128 --hidden_ratio=2 --num_encoder_layers=30
+python train.py --num_channels=64 --hidden_ratio=2 --num_encoder_layers=24
 ```
 
 You can also adjust the `batch_size`, `learning_rate`, and `gradient_accumulation_steps` to suite your training setup.
@@ -85,8 +85,9 @@ Then navigate to the dashboard using your favorite web browser.
 | --learning_rate | 1e-4 | float | The learning rate of the Adafactor optimizer. |
 | --max_gradient_norm | 2.0 | float | Clip gradients above this threshold norm before stepping. |
 | --num_channels | 64 | int | The number of channels within each encoder block. |
+| --num_filters | 8 | int | The number of independent filters per encoder layer. |
 | --hidden_ratio | 2 | (1, 2, 4) | The ratio of hidden channels to `num_channels` within the activation portion of each encoder block. |
-| --num_encoder_layers | 16 | int | The number of layers within the body of the encoder. |
+| --num_encoder_layers | 12 | int | The number of layers within the body of the encoder. |
 | --activation_checkpointing | False | bool | Should we use activation checkpointing? This will drastically reduce memory utilization during training at the cost of recomputing the forward pass. |
 | --eval_interval | 2 | int | Evaluate the model after this many epochs on the testing set. |
 | --checkpoint_interval | 2 | int | Save the model checkpoint to disk every this many epochs. |

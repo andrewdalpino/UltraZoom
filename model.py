@@ -8,6 +8,7 @@ from torch.nn import (
     Module,
     ModuleList,
     Conv2d,
+    Sigmoid,
     SiLU,
     Upsample,
     PixelShuffle,
@@ -38,7 +39,7 @@ class UltraZoom(Module, PyTorchModelHubMixin):
         self,
         upscale_ratio: int,
         num_channels: int,
-        num_filters: int,
+        num_heads: int,
         hidden_ratio: int,
         num_encoder_layers: int,
     ):
@@ -49,36 +50,10 @@ class UltraZoom(Module, PyTorchModelHubMixin):
                 f"Upscale ratio must be either 2, 4, or 8, {upscale_ratio} given."
             )
 
-        if num_channels < 1:
-            raise ValueError(
-                f"Num channels must be greater than 0, {num_channels} given."
-            )
-
-        if num_filters < 1:
-            raise ValueError(
-                f"Num filters must be greater than 0, {num_filters} given."
-            )
-
-        if num_channels % num_filters != 0:
-            raise ValueError(
-                "Num channels must be divisible by num filters, "
-                f"{num_channels} channels and {num_filters} filters given."
-            )
-
-        if hidden_ratio not in self.AVAILABLE_HIDDEN_RATIOS:
-            raise ValueError(
-                f"Hidden ratio must be either 1, 2, or 4, {hidden_ratio} given."
-            )
-
-        if num_encoder_layers < 1:
-            raise ValueError(
-                f"Num layers must be greater than 0, {num_encoder_layers} given."
-            )
-
         self.skip = Upsample(scale_factor=upscale_ratio, mode="bicubic")
 
         self.encoder = Encoder(
-            num_channels, num_filters, hidden_ratio, num_encoder_layers
+            num_channels, num_heads, hidden_ratio, num_encoder_layers
         )
         self.decoder = Decoder(num_channels, upscale_ratio)
 
@@ -128,15 +103,17 @@ class Encoder(Module):
     """A low-resolution subnetwork employing a deep stack of encoder blocks."""
 
     def __init__(
-        self, num_channels: int, num_filters: int, hidden_ratio: int, num_layers: int
+        self, num_channels: int, num_heads: int, hidden_ratio: int, num_layers: int
     ):
         super().__init__()
+
+        assert num_layers > 0, "Number of layers must be greater than 0."
 
         self.stem = Conv2d(3, num_channels, kernel_size=11, padding=5)
 
         self.body = ModuleList(
             [
-                EncoderBlock(num_channels, num_filters, hidden_ratio)
+                EncoderBlock(num_channels, num_heads, hidden_ratio)
                 for _ in range(num_layers)
             ]
         )
@@ -161,40 +138,67 @@ class Encoder(Module):
 
 
 class EncoderBlock(Module):
-    """
-    A low-resolution encoder block with {num_channels} feature maps.
-    """
+    def __init__(self, num_channels: int, num_heads: int, hidden_ratio: int):
+        super().__init__()
 
-    def __init__(self, num_channels: int, num_filters: int, hidden_ratio: int):
+        self.attention = PixelAttention(num_channels, num_heads)
+        self.convnet = InvertedBottleneck(num_channels, hidden_ratio)
+
+    def forward(self, x: Tensor) -> Tensor:
+        z = self.attention.forward(x)
+        z = self.convnet.forward(z)
+
+        z = x + z  # Local residual connection
+
+        return z
+    
+class PixelAttention(Module):
+    def __init__(self, num_channels: int, num_heads: int):
         super().__init__()
 
         assert num_channels > 0, "Number of channels must be greater than 0."
-        assert num_filters > 0, "Number of filters must be greater than 0."
-        assert hidden_ratio in {1, 2, 4}, "Hidden ratio must be either 1, 2, or 4."
+        assert num_channels % num_heads == 0, "Number of channels must be divisible by number of heads."
 
-        num_groups = num_channels // num_filters
+        num_groups = num_channels // num_heads
 
         self.conv1 = Conv2d(
             num_channels, num_channels, kernel_size=7, padding=3, groups=num_groups
         )
 
+        self.conv2 = Conv2d(num_channels, num_channels, kernel_size=1)
+
+        self.sigmoid = Sigmoid()
+
+    def forward(self, x: Tensor) -> Tensor:
+        z = self.conv1.forward(x)
+        z = self.conv2.forward(z)
+        z = self.sigmoid.forward(z)
+
+        z = z * x
+
+        return z
+
+
+class InvertedBottleneck(Module):
+    def __init__(self, num_channels: int, hidden_ratio: int):
+        super().__init__()
+
+        assert num_channels > 0, "Number of channels must be greater than 0."
+        assert hidden_ratio in {1, 2, 4}, "Hidden ratio must be either 1, 2, or 4."
+
         hidden_channels = hidden_ratio * num_channels
 
-        self.conv2 = Conv2d(num_channels, hidden_channels, kernel_size=1)
-        self.conv3 = Conv2d(hidden_channels, num_channels, kernel_size=1)
+        self.conv1 = Conv2d(num_channels, hidden_channels, kernel_size=3, padding=1)
+        self.conv2 = Conv2d(hidden_channels, num_channels, kernel_size=3, padding=1)
 
         self.silu = SiLU()
 
     def forward(self, x: Tensor) -> Tensor:
         z = self.conv1.forward(x)
-        z = self.conv2.forward(z)
         z = self.silu.forward(z)
-        z = self.conv3.forward(z)
-
-        z = x + z  # Local residual connection
+        z = self.conv2.forward(z)
 
         return z
-
 
 class Decoder(Module):
     """A high-resolution decoder head with sub-pixel convolution and pixel shuffle."""

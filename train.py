@@ -11,12 +11,12 @@ from torch.nn.utils import clip_grad_norm_
 from torch.optim import AdamW
 from torch.amp import autocast
 from torch.cuda import is_available as cuda_is_available, is_bf16_supported
+from torch.backends.mps import is_available as mps_is_available
 from torch.utils.tensorboard import SummaryWriter
 
 from torchvision.transforms.v2 import (
     Compose,
-    RandomResizedCrop,
-    RandomHorizontalFlip,
+    RandomCrop,
     ColorJitter,
 )
 
@@ -56,7 +56,7 @@ def main():
     parser.add_argument("--learning_rate", default=1e-4, type=float)
     parser.add_argument("--max_gradient_norm", default=2.0, type=float)
     parser.add_argument("--num_channels", default=64, type=int)
-    parser.add_argument("--num_filters", default=8, type=int)
+    parser.add_argument("--num_heads", default=8, type=int)
     parser.add_argument("--hidden_ratio", default=2, type=int)
     parser.add_argument("--num_encoder_layers", default=16, type=int)
     parser.add_argument("--activation_checkpointing", action="store_true")
@@ -95,6 +95,9 @@ def main():
 
     if "cuda" in args.device and not cuda_is_available():
         raise RuntimeError("Cuda is not available.")
+    
+    if "mps" in args.device and not mps_is_available():
+        raise RuntimeError("MPS is not available.")
 
     torch.set_float32_matmul_precision("high")
 
@@ -116,13 +119,12 @@ def main():
         ImageFolder,
         upscale_ratio=args.upscale_ratio,
         target_resolution=args.target_resolution,
+
     )
 
     pre_transformer = Compose(
         [
-            RandomResizedCrop(
-                args.target_resolution, scale=(0.8, 1.0), interpolation="bicubic"
-            ),
+            RandomCrop(args.target_resolution),
             ColorJitter(
                 brightness=args.brightness_jitter,
                 contrast=args.contrast_jitter,
@@ -138,7 +140,7 @@ def main():
     new_dataloader = partial(
         DataLoader,
         batch_size=args.batch_size,
-        pin_memory="cpu" not in args.device,
+        pin_memory="cuda" in args.device,
         num_workers=args.num_dataset_processes,
     )
 
@@ -148,7 +150,7 @@ def main():
     model_args = {
         "upscale_ratio": args.upscale_ratio,
         "num_channels": args.num_channels,
-        "num_filters": args.num_filters,
+        "num_heads": args.num_heads,
         "hidden_ratio": args.hidden_ratio,
         "num_encoder_layers": args.num_encoder_layers,
     }
@@ -160,8 +162,10 @@ def main():
     if args.activation_checkpointing:
         model.encoder.enable_activation_checkpointing()
 
-    print("Compiling model")
-    model = torch.compile(model)
+    if "cuda" in args.device:
+        print("Compiling model")
+
+        model = torch.compile(model)
 
     print(f"Model has {model.num_trainable_params:,} trainable parameters")
 
@@ -171,8 +175,10 @@ def main():
     vgg_loss_function = VGGLoss().to(args.device)
     tv_loss_function = TVLoss()
 
-    print("Compiling embedding model")
-    vgg_loss_function = torch.compile(vgg_loss_function)
+    if "cuda" in args.device:
+        print("Compiling embedding model")
+        
+        vgg_loss_function = torch.compile(vgg_loss_function)
 
     print(f"Embedding model has {vgg_loss_function.num_params:,} parameters")
 

@@ -16,6 +16,7 @@ from torchvision.transforms.v2 import (
     ToDtype,
 )
 
+
 from torchvision.transforms.v2.functional import InterpolationMode
 
 from PIL import Image
@@ -28,14 +29,18 @@ class ImageFolder(Dataset):
 
     IMAGE_MODE = "RGB"
 
+    INTERPOLATION_MODES = {
+        InterpolationMode.BICUBIC,
+        InterpolationMode.BILINEAR,
+        InterpolationMode.NEAREST,
+    }
+
     def __init__(
         self,
         root_path: str,
         upscale_ratio: int,
         target_resolution: int,
         pre_transformer: Transform | None = None,
-        min_jpeg_quality: int = 50,
-        max_jpeg_quality: int = 100,
     ):
         if upscale_ratio not in UltraZoom.AVAILABLE_UPSCALE_RATIOS:
             raise ValueError(
@@ -72,31 +77,17 @@ class ImageFolder(Dataset):
                 f"than the target resolution of {target_resolution}."
             )
 
-        input_resolution = target_resolution // upscale_ratio
+        degraded_resolution = target_resolution // upscale_ratio
 
-        input_transformer = Compose(
+        degrade_transformer = Compose(
             [
                 RandomChoice(
                     [
-                        Resize(
-                            input_resolution, interpolation=InterpolationMode.BICUBIC
-                        ),
-                        Resize(
-                            input_resolution, interpolation=InterpolationMode.BILINEAR
-                        ),
-                        Resize(
-                            input_resolution, interpolation=InterpolationMode.NEAREST
-                        ),
+                        Resize(degraded_resolution, interpolation=mode)
+                        for mode in self.INTERPOLATION_MODES
                     ]
                 ),
-                CenterCrop(input_resolution),
-            ]
-        )
-
-        target_transformer = Compose(
-            [
-                Resize(target_resolution, interpolation=InterpolationMode.BICUBIC),
-                CenterCrop(target_resolution),
+                CenterCrop(degraded_resolution),
             ]
         )
 
@@ -104,8 +95,7 @@ class ImageFolder(Dataset):
 
         self.image_paths = image_paths
         self.pre_transformer = pre_transformer
-        self.input_transformer = input_transformer
-        self.target_transformer = target_transformer
+        self.degrade_transformer = degrade_transformer
         self.post_transformer = post_transformer
 
     @classmethod
@@ -122,11 +112,10 @@ class ImageFolder(Dataset):
         if self.pre_transformer:
             image = self.pre_transformer(image)
 
-        x = self.input_transformer(image)
-        y = self.target_transformer(image)
+        x = self.degrade_transformer(image)
 
         x = self.post_transformer(x)
-        y = self.post_transformer(y)
+        y = self.post_transformer(image)
 
         return x, y
 

@@ -9,8 +9,8 @@ from torchvision.models import vgg19, VGG19_Weights
 
 class VGGLoss(Module):
     """
-    Perceptual loss based on the L2 loss between VGG embeddings focusing on
-    both low-level and higher-order feature maps.
+    A perceptual loss based on the L2 distance between low and high-level VGG19
+    embeddings of the predicted and target image.
     """
 
     def __init__(self):
@@ -38,15 +38,15 @@ class VGGLoss(Module):
         return num_params
 
     def forward(self, y_pred: Tensor, y: Tensor) -> tuple[Tensor, Tensor]:
-        input = self.vgg22.forward(y_pred)
-        target = self.vgg22.forward(y)
+        y_pred_vgg22 = self.vgg22.forward(y_pred)
+        y_vgg22 = self.vgg22.forward(y)
 
-        vgg22_loss = self.mse(input, target)
+        vgg22_loss = self.mse(y_pred_vgg22, y_vgg22)
 
-        input = self.vgg54.forward(input)
-        target = self.vgg54.forward(target)
+        y_pred_vgg54 = self.vgg54.forward(y_pred_vgg22)
+        y_vgg54 = self.vgg54.forward(y_vgg22)
 
-        vgg54_loss = self.mse(input, target)
+        vgg54_loss = self.mse(y_pred_vgg54, y_vgg54)
 
         return vgg22_loss, vgg54_loss
 

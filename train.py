@@ -119,7 +119,6 @@ def main():
         ImageFolder,
         upscale_ratio=args.upscale_ratio,
         target_resolution=args.target_resolution,
-
     )
 
     pre_transformer = Compose(
@@ -177,7 +176,7 @@ def main():
 
     if "cuda" in args.device:
         print("Compiling embedding model")
-        
+
         vgg_loss_function = torch.compile(vgg_loss_function)
 
     print(f"Embedding model has {vgg_loss_function.num_params:,} parameters")

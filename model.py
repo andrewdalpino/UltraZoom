@@ -138,21 +138,25 @@ class Encoder(Module):
 
 
 class EncoderBlock(Module):
+    """A single encoder block consisting of two stages and a residual connection."""
+
     def __init__(self, num_channels: int, num_heads: int, hidden_ratio: int):
         super().__init__()
 
-        self.attention = PixelAttention(num_channels, num_heads)
-        self.convnet = InvertedBottleneck(num_channels, hidden_ratio)
+        self.stage1 = PixelAttention(num_channels, num_heads)
+        self.stage2 = InvertedBottleneck(num_channels, hidden_ratio)
 
     def forward(self, x: Tensor) -> Tensor:
-        z = self.attention.forward(x)
-        z = self.convnet.forward(z)
+        z = self.stage1.forward(x)
+        z = self.stage2.forward(z)
 
         z = x + z  # Local residual connection
 
         return z
     
 class PixelAttention(Module):
+    """An element-wise spatial attention module that uses grouped convolutions."""
+
     def __init__(self, num_channels: int, num_heads: int):
         super().__init__()
 
@@ -180,6 +184,8 @@ class PixelAttention(Module):
 
 
 class InvertedBottleneck(Module):
+    """A wide non-linear activation block with 3x3 convolutions."""
+
     def __init__(self, num_channels: int, hidden_ratio: int):
         super().__init__()
 

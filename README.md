@@ -1,14 +1,12 @@
 # Ultra Zoom
 
-A fast singe image super-resolution (SISR) model for upscaling images without loss of detail. Ultra Zoom uses a two-stage "zoom in and enhance" strategy that first applies a deterministic upscaling algorithm to the image and then uses a deep neural network to fill in the details. As such, Ultra Zoom requires less resources than upscalers that  necessarily predict every new pixel de novo - making it outstanding for real-time image processing. Despite its relative size, Ultra Zoom performs on par with much larger models.
+A fast single image super-resolution (SISR) model for upscaling images without loss of detail. Ultra Zoom uses a two-stage "zoom in and enhance" strategy that first applies a deterministic upscaling algorithm to the image and then uses a deep neural network to fill in the details. As such, Ultra Zoom requires less resources than upscalers that  necessarily predict every new pixel de novo - making it outstanding for real-time image processing.
 
 ## Key Features
 
 - **Fast and scalable**: Instead of directly predicting the individual pixels of the upscaled image, Ultra Zoom uses a fast deterministic upscaling algorithm and then enhances the image through a residual pathway that operates primarily within the low-resolution subspace of a deep neural network.
 
-- **Next-gen architecture**: Ultra Zoom employs a next-generation Convolutional neural network architecture that performs better than previous generations by employing large group-wise filters, wide activations, and a sub-pixel convolutional decoder.
-
-- **Optimized for perception**: Trained using two additional dynamically-weighted perceptual losses (VGG22 and VGG54) that guide the model to reconstruct both low-level and high-level features.
+- **Next-gen architecture**: Ultra Zoom employs a next-generation convolutional neural network architecture that performs better than previous generations by employing pixel-wise attention, wide non-linear activations, and a sub-pixel decoder.
 
 ## Pretrained Models
 

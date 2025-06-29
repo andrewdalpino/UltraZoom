@@ -55,6 +55,7 @@ class UltraZoom(Module, PyTorchModelHubMixin):
         self.encoder = Encoder(
             num_channels, num_heads, hidden_ratio, num_encoder_layers
         )
+        
         self.decoder = Decoder(num_channels, upscale_ratio)
 
         self.upscale_ratio = upscale_ratio

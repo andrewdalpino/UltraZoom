@@ -16,6 +16,7 @@ from torch.utils.tensorboard import SummaryWriter
 
 from torchvision.transforms.v2 import (
     Compose,
+    CenterCrop,
     RandomCrop,
     ColorJitter,
 )
@@ -39,13 +40,13 @@ def main():
     parser.add_argument("--train_images_path", default="./dataset/train", type=str)
     parser.add_argument("--test_images_path", default="./dataset/test", type=str)
     parser.add_argument("--num_dataset_processes", default=2, type=int)
-    parser.add_argument("--target_resolution", default=256, type=int)
     parser.add_argument(
         "--upscale_ratio",
         default=2,
         type=int,
         choices=UltraZoom.AVAILABLE_UPSCALE_RATIOS,
     )
+    parser.add_argument("--target_resolution", default=256, type=int)
     parser.add_argument("--brightness_jitter", default=0.1, type=float)
     parser.add_argument("--contrast_jitter", default=0.1, type=float)
     parser.add_argument("--saturation_jitter", default=0.1, type=float)
@@ -58,7 +59,7 @@ def main():
     parser.add_argument("--num_channels", default=64, type=int)
     parser.add_argument("--num_heads", default=8, type=int)
     parser.add_argument("--hidden_ratio", default=2, type=int)
-    parser.add_argument("--num_encoder_layers", default=16, type=int)
+    parser.add_argument("--num_encoder_layers", default=12, type=int)
     parser.add_argument("--activation_checkpointing", action="store_true")
     parser.add_argument("--eval_interval", default=2, type=int)
     parser.add_argument("--checkpoint_interval", default=2, type=int)
@@ -95,7 +96,7 @@ def main():
 
     if "cuda" in args.device and not cuda_is_available():
         raise RuntimeError("Cuda is not available.")
-    
+
     if "mps" in args.device and not mps_is_available():
         raise RuntimeError("MPS is not available.")
 
@@ -117,24 +118,29 @@ def main():
 
     new_dataset = partial(
         ImageFolder,
-        upscale_ratio=args.upscale_ratio,
         target_resolution=args.target_resolution,
+        upscale_ratio=args.upscale_ratio,
     )
 
-    pre_transformer = Compose(
-        [
-            RandomCrop(args.target_resolution),
-            ColorJitter(
-                brightness=args.brightness_jitter,
-                contrast=args.contrast_jitter,
-                saturation=args.saturation_jitter,
-                hue=args.hue_jitter,
-            ),
-        ]
+    training = new_dataset(
+        args.train_images_path,
+        pre_transformer=Compose(
+            [
+                RandomCrop(args.target_resolution),
+                ColorJitter(
+                    brightness=args.brightness_jitter,
+                    contrast=args.contrast_jitter,
+                    saturation=args.saturation_jitter,
+                    hue=args.hue_jitter,
+                ),
+            ]
+        ),
     )
 
-    training = new_dataset(args.train_images_path, pre_transformer=pre_transformer)
-    testing = new_dataset(args.test_images_path)
+    testing = new_dataset(
+        args.test_images_path,
+        pre_transformer=CenterCrop(args.target_resolution),
+    )
 
     new_dataloader = partial(
         DataLoader,

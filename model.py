@@ -55,7 +55,7 @@ class UltraZoom(Module, PyTorchModelHubMixin):
         self.encoder = Encoder(
             num_channels, num_heads, hidden_ratio, num_encoder_layers
         )
-        
+
         self.decoder = Decoder(num_channels, upscale_ratio)
 
         self.upscale_ratio = upscale_ratio
@@ -154,7 +154,8 @@ class EncoderBlock(Module):
         z = x + z  # Local residual connection
 
         return z
-    
+
+
 class PixelAttention(Module):
     """An element-wise spatial attention module that uses grouped convolutions."""
 
@@ -162,7 +163,9 @@ class PixelAttention(Module):
         super().__init__()
 
         assert num_channels > 0, "Number of channels must be greater than 0."
-        assert num_channels % num_heads == 0, "Number of channels must be divisible by number of heads."
+        assert (
+            num_channels % num_heads == 0
+        ), "Number of channels must be divisible by number of heads."
 
         num_groups = num_channels // num_heads
 
@@ -206,6 +209,7 @@ class InvertedBottleneck(Module):
         z = self.conv2.forward(z)
 
         return z
+
 
 class Decoder(Module):
     """A high-resolution decoder head with sub-pixel convolution and pixel shuffle."""

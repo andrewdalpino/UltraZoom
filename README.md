@@ -83,7 +83,7 @@ Then navigate to the dashboard using your favorite web browser.
 | --learning_rate | 1e-4 | float | The learning rate of the Adafactor optimizer. |
 | --max_gradient_norm | 2.0 | float | Clip gradients above this threshold norm before stepping. |
 | --num_channels | 64 | int | The number of channels within each encoder block. |
-| --num_filters | 8 | int | The number of independent filters per encoder layer. |
+| --num_heads | 8 | int | The number of independent filters per pixel attention layer. |
 | --hidden_ratio | 2 | (1, 2, 4) | The ratio of hidden channels to `num_channels` within the activation portion of each encoder block. |
 | --num_encoder_layers | 12 | int | The number of layers within the body of the encoder. |
 | --activation_checkpointing | False | bool | Should we use activation checkpointing? This will drastically reduce memory utilization during training at the cost of recomputing the forward pass. |

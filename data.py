@@ -12,10 +12,8 @@ from torchvision.transforms.v2 import (
     Compose,
     RandomChoice,
     Resize,
-    CenterCrop,
     ToDtype,
 )
-
 
 from torchvision.transforms.v2.functional import InterpolationMode
 
@@ -32,14 +30,14 @@ class ImageFolder(Dataset):
     INTERPOLATION_MODES = {
         InterpolationMode.BICUBIC,
         InterpolationMode.BILINEAR,
-        InterpolationMode.NEAREST,
+        InterpolationMode.NEAREST_EXACT,
     }
 
     def __init__(
         self,
         root_path: str,
-        upscale_ratio: int,
         target_resolution: int,
+        upscale_ratio: int,
         pre_transformer: Transform | None = None,
     ):
         if upscale_ratio not in UltraZoom.AVAILABLE_UPSCALE_RATIOS:
@@ -87,7 +85,6 @@ class ImageFolder(Dataset):
                         for mode in self.INTERPOLATION_MODES
                     ]
                 ),
-                CenterCrop(degraded_resolution),
             ]
         )
 

@@ -65,6 +65,10 @@ def main():
 
     y_pred = model.upscale(x)
 
+    l1_distance = torch.abs(y_interpolated - y_pred).mean().item()
+
+    print(f"L1 distance: {l1_distance:.5f}")
+
     pair = torch.stack(
         [
             y_interpolated.squeeze(0),

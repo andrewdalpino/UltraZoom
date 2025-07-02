@@ -47,8 +47,8 @@ def main():
         choices=UltraZoom.AVAILABLE_UPSCALE_RATIOS,
     )
     parser.add_argument("--target_resolution", default=256, type=int)
-    parser.add_argument("--blur_amount", default=1.0, type=float)
-    parser.add_argument("--noise_amount", default=1.0, type=float)
+    parser.add_argument("--blur_amount", default=0.5, type=float)
+    parser.add_argument("--noise_amount", default=0.01, type=float)
     parser.add_argument("--brightness_jitter", default=0.1, type=float)
     parser.add_argument("--contrast_jitter", default=0.1, type=float)
     parser.add_argument("--saturation_jitter", default=0.1, type=float)
@@ -106,7 +106,7 @@ def main():
 
     dtype = (
         torch.bfloat16
-        if args.device == "cuda" and is_bf16_supported()
+        if "cuda" in args.device and is_bf16_supported() or args.device == "mps"
         else torch.float32
     )
 
@@ -130,13 +130,13 @@ def main():
         args.train_images_path,
         pre_transformer=Compose(
             [
-                RandomCrop(args.target_resolution),
                 ColorJitter(
                     brightness=args.brightness_jitter,
                     contrast=args.contrast_jitter,
                     saturation=args.saturation_jitter,
                     hue=args.hue_jitter,
                 ),
+                RandomCrop(args.target_resolution),
             ]
         ),
     )
@@ -171,13 +171,6 @@ def main():
     if args.activation_checkpointing:
         model.encoder.enable_activation_checkpointing()
 
-    if "cuda" in args.device:
-        print("Compiling model")
-
-        model = torch.compile(model)
-
-    print(f"Model has {model.num_trainable_params:,} trainable parameters")
-
     model = model.to(args.device)
 
     l2_loss_function = MSELoss()
@@ -185,11 +178,10 @@ def main():
     tv_loss_function = TVLoss()
 
     if "cuda" in args.device:
-        print("Compiling embedding model")
+        print("Compiling models")
 
+        model = torch.compile(model)
         vgg_loss_function = torch.compile(vgg_loss_function)
-
-    print(f"Embedding model has {vgg_loss_function.num_params:,} parameters")
 
     optimizer = AdamW(model.parameters(), lr=args.learning_rate)
 
@@ -210,6 +202,9 @@ def main():
         starting_epoch += checkpoint["epoch"]
 
         print("Previous checkpoint resumed successfully")
+
+    print(f"Upscaler has {model.num_trainable_params:,} trainable parameters")
+    print(f"Perceptual loss has {vgg_loss_function.num_params:,} parameters")
 
     print("Training ...")
     model.train()

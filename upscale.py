@@ -37,8 +37,10 @@ def main():
 
     model.add_weight_norms()
 
-    print("Compiling model")
-    model = torch.compile(model)
+    if args.device == "cuda":
+        print("Compiling model")
+
+        model = torch.compile(model)
 
     model = model.to(args.device)
 
@@ -76,6 +78,8 @@ def main():
         ],
         dim=0,
     )
+
+    pair = pair.to("cpu")
 
     grid = make_grid(pair, nrow=2)
 

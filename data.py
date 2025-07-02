@@ -25,7 +25,7 @@ from model import UltraZoom
 
 
 class ImageFolder(Dataset):
-    ALLOWED_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
+    ALLOWED_EXTENSIONS = frozenset({".png", ".jpg", ".jpeg", ".webp", ".gif"})
 
     IMAGE_MODE = "RGB"
 
@@ -57,9 +57,9 @@ class ImageFolder(Dataset):
         if blur_amount < 0.0:
             raise ValueError(f"Blur amount must be non-negative, {blur_amount} given.")
 
-        if noise_amount < 0.0:
+        if noise_amount < 0.0 or noise_amount > 1.0:
             raise ValueError(
-                f"Noise amount must be non-negative, {noise_amount} given."
+                f"Noise amount must be between 0 and 1, {noise_amount} given."
             )
 
         image_paths = []
@@ -87,7 +87,7 @@ class ImageFolder(Dataset):
                 f"than the target resolution of {target_resolution}."
             )
 
-        blur_sigma = blur_amount * upscale_ratio
+        blur_sigma = upscale_ratio * blur_amount
         blur_kernel_size = 2 * int(3 * blur_sigma) + 1
 
         degraded_resolution = target_resolution // upscale_ratio
@@ -102,7 +102,7 @@ class ImageFolder(Dataset):
                     ]
                 ),
                 ToDtype(torch.float32, scale=True),
-                GaussianNoise(mean=0.0, sigma=noise_amount),
+                GaussianNoise(sigma=noise_amount),
             ]
         )
 

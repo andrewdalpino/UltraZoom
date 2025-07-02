@@ -73,6 +73,8 @@ Then navigate to the dashboard using your favorite web browser.
 | --num_dataset_processes | 2 | int | The number of CPU processes to use to preprocess the dataset. |
 | --target_resolution | 512 | int | The number of pixels in the height and width dimensions of the training images. |
 | --upscale_ratio | 2 | (2, 4, 8) | The upscaling or zoom factor. |
+| --blur_amount | 0.5 | float | The amount of blur to apply to the degraded low-resolution image. |
+| --noise_amount | 0.01 | float | The amount of noise to add to the degraded low-resolution image. |
 | --brightness_jitter | 0.1 | float | The amount of jitter applied to the brightness of the training images. |
 | --contrast_jitter | 0.1 | float | The amount of jitter applied to the contrast of the training images. |
 | --saturation_jitter | 0.1 | float | The amount of jitter applied to the saturation of the training images. |

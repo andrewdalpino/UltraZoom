@@ -47,6 +47,8 @@ def main():
         choices=UltraZoom.AVAILABLE_UPSCALE_RATIOS,
     )
     parser.add_argument("--target_resolution", default=256, type=int)
+    parser.add_argument("--blur_amount", default=1.0, type=float)
+    parser.add_argument("--noise_amount", default=1.0, type=float)
     parser.add_argument("--brightness_jitter", default=0.1, type=float)
     parser.add_argument("--contrast_jitter", default=0.1, type=float)
     parser.add_argument("--saturation_jitter", default=0.1, type=float)
@@ -120,6 +122,8 @@ def main():
         ImageFolder,
         target_resolution=args.target_resolution,
         upscale_ratio=args.upscale_ratio,
+        blur_amount=args.blur_amount,
+        noise_amount=args.noise_amount,
     )
 
     training = new_dataset(

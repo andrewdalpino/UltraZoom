@@ -12,6 +12,8 @@ from torchvision.transforms.v2 import (
     Compose,
     RandomChoice,
     Resize,
+    GaussianBlur,
+    GaussianNoise,
     ToDtype,
 )
 
@@ -39,6 +41,8 @@ class ImageFolder(Dataset):
         target_resolution: int,
         upscale_ratio: int,
         pre_transformer: Transform | None = None,
+        blur_amount: float = 0.5,
+        noise_amount: float = 0.01,
     ):
         if upscale_ratio not in UltraZoom.AVAILABLE_UPSCALE_RATIOS:
             raise ValueError(
@@ -48,6 +52,14 @@ class ImageFolder(Dataset):
         if target_resolution % upscale_ratio != 0:
             raise ValueError(
                 f"Target resolution must divide evenly into upscale_ratio."
+            )
+
+        if blur_amount < 0.0:
+            raise ValueError(f"Blur amount must be non-negative, {blur_amount} given.")
+
+        if noise_amount < 0.0:
+            raise ValueError(
+                f"Noise amount must be non-negative, {noise_amount} given."
             )
 
         image_paths = []
@@ -75,25 +87,31 @@ class ImageFolder(Dataset):
                 f"than the target resolution of {target_resolution}."
             )
 
+        blur_sigma = blur_amount * upscale_ratio
+        blur_kernel_size = 2 * int(3 * blur_sigma) + 1
+
         degraded_resolution = target_resolution // upscale_ratio
 
         degrade_transformer = Compose(
             [
+                GaussianBlur(kernel_size=blur_kernel_size, sigma=blur_sigma),
                 RandomChoice(
                     [
                         Resize(degraded_resolution, interpolation=mode)
                         for mode in self.INTERPOLATION_MODES
                     ]
                 ),
+                ToDtype(torch.float32, scale=True),
+                GaussianNoise(mean=0.0, sigma=noise_amount),
             ]
         )
 
-        post_transformer = ToDtype(torch.float32, scale=True)
+        target_transformer = ToDtype(torch.float32, scale=True)
 
         self.image_paths = image_paths
         self.pre_transformer = pre_transformer
         self.degrade_transformer = degrade_transformer
-        self.post_transformer = post_transformer
+        self.target_transformer = target_transformer
 
     @classmethod
     def has_image_extension(cls, filename: str) -> bool:
@@ -110,9 +128,7 @@ class ImageFolder(Dataset):
             image = self.pre_transformer(image)
 
         x = self.degrade_transformer(image)
-
-        x = self.post_transformer(x)
-        y = self.post_transformer(image)
+        y = self.target_transformer(image)
 
         return x, y
 

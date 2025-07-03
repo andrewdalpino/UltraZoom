@@ -106,7 +106,7 @@ def main():
 
     dtype = (
         torch.bfloat16
-        if "cuda" in args.device and is_bf16_supported() or args.device == "mps"
+        if ("cuda" in args.device and is_bf16_supported()) or args.device == "mps"
         else torch.float32
     )
 

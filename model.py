@@ -39,7 +39,6 @@ class UltraZoom(Module, PyTorchModelHubMixin):
         self,
         upscale_ratio: int,
         num_channels: int,
-        num_heads: int,
         hidden_ratio: int,
         num_encoder_layers: int,
     ):
@@ -52,11 +51,9 @@ class UltraZoom(Module, PyTorchModelHubMixin):
 
         self.skip = Upsample(scale_factor=upscale_ratio, mode="bicubic")
 
-        self.encoder = Encoder(
-            num_channels, num_heads, hidden_ratio, num_encoder_layers
-        )
+        self.encoder = Encoder(num_channels, hidden_ratio, num_encoder_layers)
 
-        self.decoder = Decoder(num_channels, upscale_ratio)
+        self.decoder = SubpixelConv2d(num_channels, upscale_ratio)
 
         self.upscale_ratio = upscale_ratio
 
@@ -81,7 +78,7 @@ class UltraZoom(Module, PyTorchModelHubMixin):
                 for name in params:
                     remove_parametrizations(module, name)
 
-    def forward(self, x: Tensor) -> Tensor:
+    def forward(self, x: Tensor) -> tuple[Tensor, Tensor]:
         s = self.skip.forward(x)
 
         z = self.encoder.forward(x)
@@ -89,11 +86,20 @@ class UltraZoom(Module, PyTorchModelHubMixin):
 
         z = s + z  # Global residual connection
 
-        return z
+        return z, s
 
     @torch.no_grad()
+    def test_compare(self, x: Tensor) -> Tensor:
+        z, s = self.forward(x)
+
+        z = torch.clamp(z, 0, 1)
+        s = torch.clamp(s, 0, 1)
+
+        return z, s
+    
+    @torch.no_grad()
     def upscale(self, x: Tensor) -> Tensor:
-        z = self.forward(x)
+        z, _ = self.forward(x)
 
         z = torch.clamp(z, 0, 1)
 
@@ -103,18 +109,16 @@ class UltraZoom(Module, PyTorchModelHubMixin):
 class Encoder(Module):
     """A low-resolution subnetwork employing a deep stack of encoder blocks."""
 
-    def __init__(
-        self, num_channels: int, num_heads: int, hidden_ratio: int, num_layers: int
-    ):
+    def __init__(self, num_channels: int, hidden_ratio: int, num_layers: int):
         super().__init__()
 
         assert num_layers > 0, "Number of layers must be greater than 0."
 
-        self.stem = Conv2d(3, num_channels, kernel_size=11, padding=5)
+        self.stem = Conv2d(3, num_channels, kernel_size=3, padding=1)
 
         self.body = ModuleList(
             [
-                EncoderBlock(num_channels, num_heads, hidden_ratio)
+                EncoderBlock(num_channels, hidden_ratio)
                 for _ in range(num_layers)
             ]
         )
@@ -141,10 +145,10 @@ class Encoder(Module):
 class EncoderBlock(Module):
     """A single encoder block consisting of two stages and a residual connection."""
 
-    def __init__(self, num_channels: int, num_heads: int, hidden_ratio: int):
+    def __init__(self, num_channels: int, hidden_ratio: int):
         super().__init__()
 
-        self.stage1 = PixelAttention(num_channels, num_heads)
+        self.stage1 = PixelAttention(num_channels)
         self.stage2 = InvertedBottleneck(num_channels, hidden_ratio)
 
     def forward(self, x: Tensor) -> Tensor:
@@ -157,29 +161,21 @@ class EncoderBlock(Module):
 
 
 class PixelAttention(Module):
-    """An element-wise spatial attention module that uses grouped convolutions."""
+    """An element-wise spatial attention module with depth-wise convolutions."""
 
-    def __init__(self, num_channels: int, num_heads: int):
+    def __init__(self, num_channels: int):
         super().__init__()
 
         assert num_channels > 0, "Number of channels must be greater than 0."
-        assert (
-            num_channels % num_heads == 0
-        ), "Number of channels must be divisible by number of heads."
 
-        num_groups = num_channels // num_heads
-
-        self.conv1 = Conv2d(
-            num_channels, num_channels, kernel_size=7, padding=3, groups=num_groups
+        self.conv = Conv2d(
+            num_channels, num_channels, kernel_size=11, padding=5, groups=num_channels
         )
-
-        self.conv2 = Conv2d(num_channels, num_channels, kernel_size=1)
 
         self.sigmoid = Sigmoid()
 
     def forward(self, x: Tensor) -> Tensor:
-        z = self.conv1.forward(x)
-        z = self.conv2.forward(z)
+        z = self.conv.forward(x)
         z = self.sigmoid.forward(z)
 
         z = z * x
@@ -211,18 +207,17 @@ class InvertedBottleneck(Module):
         return z
 
 
-class Decoder(Module):
-    """A high-resolution decoder head with sub-pixel convolution and pixel shuffle."""
+class SubpixelConv2d(Module):
+    """A high-resolution decoder with sub-pixel convolution."""
 
-    def __init__(self, num_channels: int, upscale_ratio: int):
+    def __init__(self, in_channels: int, upscale_ratio: int):
         super().__init__()
 
-        self.conv = SubPixelConv2d(
-            num_channels,
-            upscale_ratio=upscale_ratio,
-            kernel_size=3,
-            padding=1,
-        )
+        assert upscale_ratio in {2, 4, 8}, "Upscale ratio must be either 2, 4, or 8."
+
+        out_channels = 3 * upscale_ratio**2
+
+        self.conv = Conv2d(in_channels, out_channels, kernel_size=3, padding=1)
 
         self.shuffle = PixelShuffle(upscale_ratio)
 
@@ -231,25 +226,3 @@ class Decoder(Module):
         z = self.shuffle.forward(z)
 
         return z
-
-
-class SubPixelConv2d(Module):
-    def __init__(
-        self,
-        in_channels: int,
-        upscale_ratio: int,
-        kernel_size: int,
-        padding: int,
-    ):
-        super().__init__()
-
-        assert upscale_ratio in {2, 4, 8}, "Upscale ratio must be either 2, 4, or 8."
-
-        out_channels = 3 * upscale_ratio**2
-
-        self.conv = Conv2d(
-            in_channels, out_channels, kernel_size=kernel_size, padding=padding
-        )
-
-    def forward(self, x: Tensor) -> Tensor:
-        return self.conv.forward(x)

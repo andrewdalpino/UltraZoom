@@ -10,7 +10,6 @@ from torchvision.io import decode_image
 from torchvision.transforms.v2 import (
     Transform,
     Compose,
-    RandomChoice,
     Resize,
     GaussianBlur,
     GaussianNoise,
@@ -29,20 +28,14 @@ class ImageFolder(Dataset):
 
     IMAGE_MODE = "RGB"
 
-    INTERPOLATION_MODES = {
-        InterpolationMode.BICUBIC,
-        InterpolationMode.BILINEAR,
-        InterpolationMode.NEAREST_EXACT,
-    }
-
     def __init__(
         self,
         root_path: str,
         target_resolution: int,
         upscale_ratio: int,
-        pre_transformer: Transform | None = None,
-        blur_amount: float = 0.5,
-        noise_amount: float = 0.01,
+        pre_transformer: Transform | None,
+        blur_amount: float,
+        noise_amount: float,
     ):
         if upscale_ratio not in UltraZoom.AVAILABLE_UPSCALE_RATIOS:
             raise ValueError(
@@ -95,12 +88,7 @@ class ImageFolder(Dataset):
         degrade_transformer = Compose(
             [
                 GaussianBlur(kernel_size=blur_kernel_size, sigma=blur_sigma),
-                RandomChoice(
-                    [
-                        Resize(degraded_resolution, interpolation=mode)
-                        for mode in self.INTERPOLATION_MODES
-                    ]
-                ),
+                Resize(degraded_resolution, interpolation=InterpolationMode.BICUBIC),
                 ToDtype(torch.float32, scale=True),
                 GaussianNoise(sigma=noise_amount),
             ]

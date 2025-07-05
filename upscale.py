@@ -2,7 +2,6 @@ from argparse import ArgumentParser
 
 import torch
 
-from torch.nn import Upsample
 from torchvision.io import decode_image
 from torchvision.transforms.v2 import ToDtype
 from torchvision.utils import make_grid
@@ -52,8 +51,6 @@ def main():
 
     print("Model checkpoint loaded successfully")
 
-    upscale_transform = Upsample(scale_factor=model.upscale_ratio, mode="bicubic")
-
     image_to_tensor = ToDtype(torch.float32, scale=True)
 
     image = decode_image(args.image_path, mode="RGB")
@@ -61,19 +58,11 @@ def main():
     x = image_to_tensor(image).unsqueeze(0).to(args.device)
 
     print("Upscaling ...")
-    y_interpolated = upscale_transform(x)
-
-    y_interpolated = torch.clamp(y_interpolated, 0, 1)
-
-    y_pred = model.upscale(x)
-
-    l1_distance = torch.abs(y_interpolated - y_pred).mean().item()
-
-    print(f"L1 distance: {l1_distance:.5f}")
+    y_pred, y_bicubic = model.test_compare(x)
 
     pair = torch.stack(
         [
-            y_interpolated.squeeze(0),
+            y_bicubic.squeeze(0),
             y_pred.squeeze(0),
         ],
         dim=0,

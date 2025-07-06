@@ -231,7 +231,6 @@ def main():
                 l2_loss = l2_loss_function(y_pred, y)
                 vgg22_loss, vgg54_loss = vgg_loss_function(y_pred, y)
                 tv_loss = tv_loss_function(y_pred)
-                bicubic_l1 = bicubic_l1_loss_function(y_bicubic, y)
 
                 combined_loss = (
                     l2_loss / l2_loss.detach()
@@ -245,6 +244,9 @@ def main():
                 scaled_loss = combined_loss / args.gradient_accumulation_steps
 
             scaled_loss.backward()
+
+            with torch.no_grad():
+                bicubic_l1 = bicubic_l1_loss_function(y_bicubic, y)
 
             if step % args.gradient_accumulation_steps == 0:
                 norm = clip_grad_norm_(model.parameters(), args.max_gradient_norm)

@@ -36,10 +36,7 @@ def main():
 
     model.add_weight_norms()
 
-    if args.device == "cuda":
-        print("Compiling model")
-
-        model = torch.compile(model)
+    model = torch.compile(model)
 
     model = model.to(args.device)
 

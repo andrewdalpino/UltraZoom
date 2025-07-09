@@ -48,7 +48,7 @@ def main():
     )
     parser.add_argument("--target_resolution", default=256, type=int)
     parser.add_argument("--blur_amount", default=0.5, type=float)
-    parser.add_argument("--noise_amount", default=0.05, type=float)
+    parser.add_argument("--noise_amount", default=0.02, type=float)
     parser.add_argument("--brightness_jitter", default=0.1, type=float)
     parser.add_argument("--contrast_jitter", default=0.1, type=float)
     parser.add_argument("--saturation_jitter", default=0.1, type=float)
@@ -176,11 +176,10 @@ def main():
     tv_loss_function = TVLoss()
     bicubic_l1_loss_function = L1Loss()
 
-    if "cuda" in args.device:
-        print("Compiling models")
+    print("Compiling models")
 
-        model = torch.compile(model)
-        vgg_loss_function = torch.compile(vgg_loss_function)
+    model = torch.compile(model)
+    vgg_loss_function = torch.compile(vgg_loss_function)
 
     print(f"Upscaler has {model.num_trainable_params:,} trainable parameters")
     print(f"Embedder has {vgg_loss_function.num_params:,} parameters")
@@ -287,8 +286,8 @@ def main():
             f"VGG22 L2: {average_vgg22_loss:.4},",
             f"VGG54 L2: {average_vgg54_loss:.4},",
             f"TV Loss: {average_tv_loss:.4},",
-            f"Bicubic L1: {average_bicubic_l1:.4}",
-            f"Gradient Norm: {average_gradient_norm:.4},",
+            f"Bicubic L1: {average_bicubic_l1:.4},",
+            f"Gradient Norm: {average_gradient_norm:.4}",
         )
 
         if epoch % args.eval_interval == 0:
@@ -303,6 +302,7 @@ def main():
                 y_pred_psnr_metric.update(y_pred, y)
                 y_pred_ssim_metric.update(y_pred, y)
                 y_pred_vif_metric.update(y_pred, y)
+
                 y_bicubic_psnr_metric.update(y_bicubic, y)
                 y_bicubic_ssim_metric.update(y_bicubic, y)
                 y_bicubic_vif_metric.update(y_bicubic, y)
@@ -310,6 +310,7 @@ def main():
             y_pred_psnr = y_pred_psnr_metric.compute()
             y_pred_ssim = y_pred_ssim_metric.compute()
             y_pred_vif = y_pred_vif_metric.compute()
+
             y_bicubic_psnr = y_bicubic_psnr_metric.compute()
             y_bicubic_ssim = y_bicubic_ssim_metric.compute()
             y_bicubic_vif = y_bicubic_vif_metric.compute()
@@ -317,6 +318,7 @@ def main():
             logger.add_scalar("Enhanced PSNR", y_pred_psnr, epoch)
             logger.add_scalar("Enhanced SSIM", y_pred_ssim, epoch)
             logger.add_scalar("Enhanced VIF", y_pred_vif, epoch)
+
             logger.add_scalar("Bicubic PSNR", y_bicubic_psnr, epoch)
             logger.add_scalar("Bicubic SSIM", y_bicubic_ssim, epoch)
             logger.add_scalar("Bicubic VIF", y_bicubic_vif, epoch)
@@ -330,6 +332,7 @@ def main():
             y_pred_psnr_metric.reset()
             y_pred_ssim_metric.reset()
             y_pred_vif_metric.reset()
+
             y_bicubic_psnr_metric.reset()
             y_bicubic_ssim_metric.reset()
             y_bicubic_vif_metric.reset()

@@ -96,7 +96,7 @@ class UltraZoom(Module, PyTorchModelHubMixin):
         s = torch.clamp(s, 0, 1)
 
         return z, s
-    
+
     @torch.no_grad()
     def upscale(self, x: Tensor) -> Tensor:
         z, _ = self.forward(x)
@@ -117,10 +117,7 @@ class Encoder(Module):
         self.stem = Conv2d(3, num_channels, kernel_size=3, padding=1)
 
         self.body = ModuleList(
-            [
-                EncoderBlock(num_channels, hidden_ratio)
-                for _ in range(num_layers)
-            ]
+            [EncoderBlock(num_channels, hidden_ratio) for _ in range(num_layers)]
         )
 
         self.checkpoint = lambda layer, x: layer(x)

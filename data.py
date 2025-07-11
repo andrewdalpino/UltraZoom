@@ -62,6 +62,25 @@ class ImageFolder(Dataset):
                 f"Noise amount must be between 0 and 1, {noise_amount} given."
             )
 
+        blur_sigma = blur_amount * upscale_ratio
+        blur_kernel_size = 2 * int(3 * blur_sigma) + 1
+
+        degraded_resolution = target_resolution // upscale_ratio
+
+        degraded_quality = 100 - int(compression_amount * 100)
+
+        degrade_transformer = Compose(
+            [
+                GaussianBlur(kernel_size=blur_kernel_size, sigma=blur_sigma),
+                Resize(degraded_resolution, interpolation=InterpolationMode.BICUBIC),
+                JPEG(quality=degraded_quality),
+                ToDtype(torch.float32, scale=True),
+                GaussianNoise(sigma=noise_amount),
+            ]
+        )
+
+        target_transformer = ToDtype(torch.float32, scale=True)
+
         image_paths = []
         dropped = 0
 
@@ -87,29 +106,10 @@ class ImageFolder(Dataset):
                 f"than the target resolution of {target_resolution}."
             )
 
-        blur_sigma = upscale_ratio * blur_amount
-        blur_kernel_size = 2 * int(3 * blur_sigma) + 1
-
-        degraded_resolution = target_resolution // upscale_ratio
-
-        degraded_quality = 100 - int(100 * compression_amount)
-
-        degrade_transformer = Compose(
-            [
-                GaussianBlur(kernel_size=blur_kernel_size, sigma=blur_sigma),
-                Resize(degraded_resolution, interpolation=InterpolationMode.BICUBIC),
-                JPEG(quality=degraded_quality),
-                ToDtype(torch.float32, scale=True),
-                GaussianNoise(sigma=noise_amount),
-            ]
-        )
-
-        target_transformer = ToDtype(torch.float32, scale=True)
-
-        self.image_paths = image_paths
         self.pre_transformer = pre_transformer
         self.degrade_transformer = degrade_transformer
         self.target_transformer = target_transformer
+        self.image_paths = image_paths
 
     @classmethod
     def has_image_extension(cls, filename: str) -> bool:

@@ -6,15 +6,15 @@ A fast single image super-resolution (SISR) model for upscaling images without l
 
 - **Fast and scalable**: Instead of directly predicting the individual pixels of the upscaled image, Ultra Zoom uses a fast deterministic upscaling algorithm and then enhances the image through a residual pathway that operates primarily within the low-resolution subspace of a deep neural network.
 
-- **Next-gen architecture**: Ultra Zoom employs a next-generation convolutional neural network architecture that performs better than previous generations by employing pixel-wise attention, wide non-linear activations, and a sub-pixel decoder.
+- **Next-gen architecture**: Ultra Zoom employs a next-generation convolutional neural network architecture that performs better than previous generations by employing Pixel Attention, wide non-linear activations, and a sub-pixel convolution decoder.
 
 ## Pretrained Models
 
 The following pretrained models are available on HuggingFace Hub.
 
-| Name | Num Channels | Num Filters | Hidden Ratio | Encoder Layers | Total Parameters |
+| Name | Zoom | Num Channels | Hidden Ratio | Encoder Layers | Total Parameters |
 |---|---|---|---|---|---|
-| andrewdalpino/UltraZoom-2X | 128 | 8 | 4 | 12 | 2.25M |
+| [andrewdalpino/UltraZoom-2X](https://huggingface.co/andrewdalpino/UltraZoom-2X) | 2X | 64 | 2 | 20 | 3.1M |
 
 ## Install Project Dependencies
 
@@ -73,21 +73,22 @@ Then navigate to the dashboard using your favorite web browser.
 | --num_dataset_processes | 2 | int | The number of CPU processes to use to preprocess the dataset. |
 | --target_resolution | 512 | int | The number of pixels in the height and width dimensions of the training images. |
 | --upscale_ratio | 2 | (2, 4, 8) | The upscaling or zoom factor. |
-| --blur_amount | 0.5 | float | The amount of blur to apply to the degraded low-resolution image. |
-| --noise_amount | 0.01 | float | The amount of noise to add to the degraded low-resolution image. |
+| --blur_amount | 0.5 | float | The amount of Gaussian blur to apply to the degraded low-resolution image. |
+| --compression_amount | 0.2 | float | The amount of JPEG compression to apply to the degraded low-resolution image. |
+| --noise_amount | 0.02 | float | The amount of Gaussian noise to add to the degraded low-resolution image. |
 | --brightness_jitter | 0.1 | float | The amount of jitter applied to the brightness of the training images. |
 | --contrast_jitter | 0.1 | float | The amount of jitter applied to the contrast of the training images. |
 | --saturation_jitter | 0.1 | float | The amount of jitter applied to the saturation of the training images. |
 | --hue_jitter | 0.1 | float | The amount of jitter applied to the hue of the training images. |
-| --batch_size | 4 | int | The number of training images to pass through the network at a time. |
-| --gradient_accumulation_steps | 32 | int | The number of batches to pass through the network before updating the model weights. |
-| --num_epochs | 100 | int | The number of epochs to train for. |
-| --learning_rate | 1e-4 | float | The learning rate of the Adafactor optimizer. |
+| --batch_size | 8 | int | The number of training images to pass through the network at a time. |
+| --gradient_accumulation_steps | 16 | int | The number of batches to pass through the network before updating the model weights. |
+| --num_epochs | 50 | int | The number of epochs to train for. |
+| --learning_rate | 5e-4 | float | The learning rate of the Adafactor optimizer. |
 | --max_gradient_norm | 2.0 | float | Clip gradients above this threshold norm before stepping. |
 | --num_channels | 64 | int | The number of channels within each encoder block. |
 | --num_heads | 8 | int | The number of independent filters per pixel attention layer. |
 | --hidden_ratio | 2 | (1, 2, 4) | The ratio of hidden channels to `num_channels` within the activation portion of each encoder block. |
-| --num_encoder_layers | 12 | int | The number of layers within the body of the encoder. |
+| --num_encoder_layers | 20 | int | The number of layers within the body of the encoder. |
 | --activation_checkpointing | False | bool | Should we use activation checkpointing? This will drastically reduce memory utilization during training at the cost of recomputing the forward pass. |
 | --eval_interval | 2 | int | Evaluate the model after this many epochs on the testing set. |
 | --checkpoint_interval | 2 | int | Save the model checkpoint to disk every this many epochs. |

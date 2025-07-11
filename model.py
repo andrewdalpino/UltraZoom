@@ -158,7 +158,7 @@ class EncoderBlock(Module):
 
 
 class PixelAttention(Module):
-    """An element-wise spatial attention module with depth-wise convolutions."""
+    """An element-wise spatial attention module with large depth-wise convolutions."""
 
     def __init__(self, num_channels: int):
         super().__init__()
@@ -205,7 +205,7 @@ class InvertedBottleneck(Module):
 
 
 class SubpixelConv2d(Module):
-    """A high-resolution decoder with sub-pixel convolution."""
+    """A high-resolution decoder using sub-pixel convolution."""
 
     def __init__(self, in_channels: int, upscale_ratio: int):
         super().__init__()

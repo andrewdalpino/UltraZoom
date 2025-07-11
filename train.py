@@ -29,7 +29,7 @@ from torchmetrics.image import (
 
 from data import ImageFolder
 from model import UltraZoom
-from loss import VGGLoss, TVLoss
+from loss import VGGLoss
 
 from tqdm import tqdm
 
@@ -48,14 +48,15 @@ def main():
     )
     parser.add_argument("--target_resolution", default=256, type=int)
     parser.add_argument("--blur_amount", default=0.5, type=float)
+    parser.add_argument("--compression_amount", default=0.2, type=float)
     parser.add_argument("--noise_amount", default=0.02, type=float)
     parser.add_argument("--brightness_jitter", default=0.1, type=float)
     parser.add_argument("--contrast_jitter", default=0.1, type=float)
     parser.add_argument("--saturation_jitter", default=0.1, type=float)
     parser.add_argument("--hue_jitter", default=0.1, type=float)
-    parser.add_argument("--batch_size", default=32, type=int)
-    parser.add_argument("--gradient_accumulation_steps", default=4, type=int)
-    parser.add_argument("--num_epochs", default=100, type=int)
+    parser.add_argument("--batch_size", default=8, type=int)
+    parser.add_argument("--gradient_accumulation_steps", default=16, type=int)
+    parser.add_argument("--num_epochs", default=50, type=int)
     parser.add_argument("--learning_rate", default=5e-4, type=float)
     parser.add_argument("--max_gradient_norm", default=2.0, type=float)
     parser.add_argument("--num_channels", default=64, type=int)
@@ -122,6 +123,7 @@ def main():
         target_resolution=args.target_resolution,
         upscale_ratio=args.upscale_ratio,
         blur_amount=args.blur_amount,
+        compression_amount=args.compression_amount,
         noise_amount=args.noise_amount,
     )
 
@@ -173,8 +175,7 @@ def main():
 
     l2_loss_function = MSELoss()
     vgg_loss_function = VGGLoss().to(args.device)
-    tv_loss_function = TVLoss()
-    bicubic_l1_loss_function = L1Loss()
+    bicubic_l1_distance = L1Loss()
 
     print("Compiling models")
 
@@ -186,13 +187,13 @@ def main():
 
     optimizer = AdamW(model.parameters(), lr=args.learning_rate)
 
-    y_pred_psnr_metric = PeakSignalNoiseRatio().to(args.device)
-    y_pred_ssim_metric = StructuralSimilarityIndexMeasure().to(args.device)
-    y_pred_vif_metric = VisualInformationFidelity().to(args.device)
+    bicubic_psnr_metric = PeakSignalNoiseRatio().to(args.device)
+    bicubic_ssim_metric = StructuralSimilarityIndexMeasure().to(args.device)
+    bicubic_vif_metric = VisualInformationFidelity().to(args.device)
 
-    y_bicubic_psnr_metric = PeakSignalNoiseRatio().to(args.device)
-    y_bicubic_ssim_metric = StructuralSimilarityIndexMeasure().to(args.device)
-    y_bicubic_vif_metric = VisualInformationFidelity().to(args.device)
+    enhanced_psnr_metric = PeakSignalNoiseRatio().to(args.device)
+    enhanced_ssim_metric = StructuralSimilarityIndexMeasure().to(args.device)
+    enhanced_vif_metric = VisualInformationFidelity().to(args.device)
 
     starting_epoch = 1
 
@@ -212,11 +213,9 @@ def main():
     model.train()
 
     for epoch in range(starting_epoch, args.num_epochs + 1):
-        total_l2_loss, total_vgg22_loss = 0.0, 0.0
-        total_tv_loss, total_vgg54_loss = 0.0, 0.0
+        total_l2_loss, total_vgg22_loss, total_vgg54_loss = 0.0, 0.0, 0.0
         total_batches, total_steps = 0, 0
         total_gradient_norm = 0.0
-        total_bicubic_l1 = 0.0
 
         for step, (x, y) in enumerate(
             tqdm(train_loader, desc=f"Epoch {epoch}", leave=False), start=1
@@ -229,23 +228,16 @@ def main():
 
                 l2_loss = l2_loss_function(y_pred, y)
                 vgg22_loss, vgg54_loss = vgg_loss_function(y_pred, y)
-                tv_loss = tv_loss_function(y_pred)
 
                 combined_loss = (
                     l2_loss / l2_loss.detach()
                     + vgg22_loss / vgg22_loss.detach()
                     + vgg54_loss / vgg54_loss.detach()
-                    + tv_loss / tv_loss.detach()
                 )
-
-                combined_loss /= 4.0
 
                 scaled_loss = combined_loss / args.gradient_accumulation_steps
 
             scaled_loss.backward()
-
-            with torch.no_grad():
-                bicubic_l1 = bicubic_l1_loss_function(y_bicubic, y)
 
             if step % args.gradient_accumulation_steps == 0:
                 norm = clip_grad_norm_(model.parameters(), args.max_gradient_norm)
@@ -261,23 +253,17 @@ def main():
             total_l2_loss += l2_loss.item()
             total_vgg22_loss += vgg22_loss.item()
             total_vgg54_loss += vgg54_loss.item()
-            total_tv_loss += tv_loss.item()
-            total_bicubic_l1 += bicubic_l1.item()
 
             total_batches += 1
 
         average_l2_loss = total_l2_loss / total_batches
         average_vgg22_loss = total_vgg22_loss / total_batches
         average_vgg54_loss = total_vgg54_loss / total_batches
-        average_tv_loss = total_tv_loss / total_batches
         average_gradient_norm = total_gradient_norm / total_steps
-        average_bicubic_l1 = total_bicubic_l1 / total_batches
 
         logger.add_scalar("Pixel L2", average_l2_loss, epoch)
         logger.add_scalar("VGG22 L2", average_vgg22_loss, epoch)
         logger.add_scalar("VGG54 L2", average_vgg54_loss, epoch)
-        logger.add_scalar("TV Loss", average_tv_loss, epoch)
-        logger.add_scalar("Bicubic L1", average_bicubic_l1, epoch)
         logger.add_scalar("Gradient Norm", average_gradient_norm, epoch)
 
         print(
@@ -285,9 +271,7 @@ def main():
             f"Pixel L2: {average_l2_loss:.4},",
             f"VGG22 L2: {average_vgg22_loss:.4},",
             f"VGG54 L2: {average_vgg54_loss:.4},",
-            f"TV Loss: {average_tv_loss:.4},",
-            f"Bicubic L1: {average_bicubic_l1:.4},",
-            f"Gradient Norm: {average_gradient_norm:.4}",
+            f"Gradient Norm: {average_gradient_norm:.4},",
         )
 
         if epoch % args.eval_interval == 0:
@@ -299,43 +283,43 @@ def main():
 
                 y_pred, y_bicubic = model.test_compare(x)
 
-                y_pred_psnr_metric.update(y_pred, y)
-                y_pred_ssim_metric.update(y_pred, y)
-                y_pred_vif_metric.update(y_pred, y)
+                bicubic_psnr_metric.update(y_bicubic, y)
+                bicubic_ssim_metric.update(y_bicubic, y)
+                bicubic_vif_metric.update(y_bicubic, y)
 
-                y_bicubic_psnr_metric.update(y_bicubic, y)
-                y_bicubic_ssim_metric.update(y_bicubic, y)
-                y_bicubic_vif_metric.update(y_bicubic, y)
+                enhanced_psnr_metric.update(y_pred, y)
+                enhanced_ssim_metric.update(y_pred, y)
+                enhanced_vif_metric.update(y_pred, y)
 
-            y_pred_psnr = y_pred_psnr_metric.compute()
-            y_pred_ssim = y_pred_ssim_metric.compute()
-            y_pred_vif = y_pred_vif_metric.compute()
+            bicubic_psnr = bicubic_psnr_metric.compute()
+            bicubic_ssim = bicubic_ssim_metric.compute()
+            bicubic_vif = bicubic_vif_metric.compute()
 
-            y_bicubic_psnr = y_bicubic_psnr_metric.compute()
-            y_bicubic_ssim = y_bicubic_ssim_metric.compute()
-            y_bicubic_vif = y_bicubic_vif_metric.compute()
+            enhanced_psnr = enhanced_psnr_metric.compute()
+            enhanced_ssim = enhanced_ssim_metric.compute()
+            enhanced_vif = enhanced_vif_metric.compute()
 
-            logger.add_scalar("Enhanced PSNR", y_pred_psnr, epoch)
-            logger.add_scalar("Enhanced SSIM", y_pred_ssim, epoch)
-            logger.add_scalar("Enhanced VIF", y_pred_vif, epoch)
+            logger.add_scalar("Bicubic PSNR", bicubic_psnr, epoch)
+            logger.add_scalar("Bicubic SSIM", bicubic_ssim, epoch)
+            logger.add_scalar("Bicubic VIF", bicubic_vif, epoch)
 
-            logger.add_scalar("Bicubic PSNR", y_bicubic_psnr, epoch)
-            logger.add_scalar("Bicubic SSIM", y_bicubic_ssim, epoch)
-            logger.add_scalar("Bicubic VIF", y_bicubic_vif, epoch)
+            logger.add_scalar("Enhanced PSNR", enhanced_psnr, epoch)
+            logger.add_scalar("Enhanced SSIM", enhanced_ssim, epoch)
+            logger.add_scalar("Enhanced VIF", enhanced_vif, epoch)
 
             print(
-                f"PSNR: {y_bicubic_psnr:.5} / {y_pred_psnr:.5},",
-                f"SSIM: {y_bicubic_ssim:.4} / {y_pred_ssim:.4},",
-                f"VIF: {y_bicubic_vif:.4} / {y_pred_vif:.4}",
+                f"PSNR: {bicubic_psnr:.4} → {enhanced_psnr:.4},",
+                f"SSIM: {bicubic_ssim:.4} → {enhanced_ssim:.4},",
+                f"VIF: {bicubic_vif:.4} → {enhanced_vif:.4}",
             )
 
-            y_pred_psnr_metric.reset()
-            y_pred_ssim_metric.reset()
-            y_pred_vif_metric.reset()
+            bicubic_psnr_metric.reset()
+            bicubic_ssim_metric.reset()
+            bicubic_vif_metric.reset()
 
-            y_bicubic_psnr_metric.reset()
-            y_bicubic_ssim_metric.reset()
-            y_bicubic_vif_metric.reset()
+            enhanced_psnr_metric.reset()
+            enhanced_ssim_metric.reset()
+            enhanced_vif_metric.reset()
 
             model.train()
 

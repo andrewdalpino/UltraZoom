@@ -13,6 +13,7 @@ from torchvision.transforms.v2 import (
     Resize,
     GaussianBlur,
     GaussianNoise,
+    JPEG,
     ToDtype,
 )
 
@@ -35,6 +36,7 @@ class ImageFolder(Dataset):
         upscale_ratio: int,
         pre_transformer: Transform | None,
         blur_amount: float,
+        compression_amount: float,
         noise_amount: float,
     ):
         if upscale_ratio not in UltraZoom.AVAILABLE_UPSCALE_RATIOS:
@@ -49,6 +51,11 @@ class ImageFolder(Dataset):
 
         if blur_amount < 0.0:
             raise ValueError(f"Blur amount must be non-negative, {blur_amount} given.")
+
+        if compression_amount < 0.0 or compression_amount > 1.0:
+            raise ValueError(
+                f"Compression amount must be between 0 and 1, {compression_amount} given."
+            )
 
         if noise_amount < 0.0 or noise_amount > 1.0:
             raise ValueError(
@@ -85,10 +92,13 @@ class ImageFolder(Dataset):
 
         degraded_resolution = target_resolution // upscale_ratio
 
+        degraded_quality = 100 - int(100 * compression_amount)
+
         degrade_transformer = Compose(
             [
                 GaussianBlur(kernel_size=blur_kernel_size, sigma=blur_sigma),
                 Resize(degraded_resolution, interpolation=InterpolationMode.BICUBIC),
+                JPEG(quality=degraded_quality),
                 ToDtype(torch.float32, scale=True),
                 GaussianNoise(sigma=noise_amount),
             ]

@@ -145,7 +145,7 @@ class EncoderBlock(Module):
     def __init__(self, num_channels: int, hidden_ratio: int):
         super().__init__()
 
-        self.stage1 = PixelAttention(num_channels)
+        self.stage1 = SpatialAttention(num_channels)
         self.stage2 = InvertedBottleneck(num_channels, hidden_ratio)
 
     def forward(self, x: Tensor) -> Tensor:
@@ -157,22 +157,31 @@ class EncoderBlock(Module):
         return z
 
 
-class PixelAttention(Module):
-    """An element-wise spatial attention module with large depth-wise convolutions."""
+class SpatialAttention(Module):
+    """A spatial attention module with large depth-wise convolutions."""
 
     def __init__(self, num_channels: int):
         super().__init__()
 
         assert num_channels > 0, "Number of channels must be greater than 0."
 
-        self.conv = Conv2d(
-            num_channels, num_channels, kernel_size=11, padding=5, groups=num_channels
+        self.depthwise = Conv2d(
+            num_channels,
+            num_channels,
+            kernel_size=11,
+            padding=5,
+            groups=num_channels,
+            bias=False,
         )
+
+        self.pointwise = Conv2d(num_channels, num_channels, kernel_size=1)
 
         self.sigmoid = Sigmoid()
 
     def forward(self, x: Tensor) -> Tensor:
-        z = self.conv.forward(x)
+        z = self.depthwise.forward(x)
+        z = self.pointwise.forward(z)
+
         z = self.sigmoid.forward(z)
 
         z = z * x

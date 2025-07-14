@@ -6,7 +6,7 @@ from functools import partial
 import torch
 
 from torch.utils.data import DataLoader
-from torch.nn import MSELoss, L1Loss
+from torch.nn import MSELoss
 from torch.nn.utils import clip_grad_norm_
 from torch.optim import AdamW
 from torch.amp import autocast
@@ -39,7 +39,7 @@ def main():
 
     parser.add_argument("--train_images_path", default="./dataset/train", type=str)
     parser.add_argument("--test_images_path", default="./dataset/test", type=str)
-    parser.add_argument("--num_dataset_processes", default=2, type=int)
+    parser.add_argument("--num_dataset_processes", default=4, type=int)
     parser.add_argument(
         "--upscale_ratio",
         default=2,
@@ -54,12 +54,12 @@ def main():
     parser.add_argument("--contrast_jitter", default=0.1, type=float)
     parser.add_argument("--saturation_jitter", default=0.1, type=float)
     parser.add_argument("--hue_jitter", default=0.1, type=float)
-    parser.add_argument("--batch_size", default=8, type=int)
-    parser.add_argument("--gradient_accumulation_steps", default=16, type=int)
-    parser.add_argument("--num_epochs", default=50, type=int)
+    parser.add_argument("--batch_size", default=32, type=int)
+    parser.add_argument("--gradient_accumulation_steps", default=4, type=int)
+    parser.add_argument("--num_epochs", default=100, type=int)
     parser.add_argument("--learning_rate", default=5e-4, type=float)
     parser.add_argument("--max_gradient_norm", default=2.0, type=float)
-    parser.add_argument("--num_channels", default=64, type=int)
+    parser.add_argument("--num_channels", default=48, type=int)
     parser.add_argument("--hidden_ratio", default=2, type=int)
     parser.add_argument("--num_encoder_layers", default=20, type=int)
     parser.add_argument("--activation_checkpointing", action="store_true")
@@ -175,7 +175,6 @@ def main():
 
     l2_loss_function = MSELoss()
     vgg_loss_function = VGGLoss().to(args.device)
-    bicubic_l1_distance = L1Loss()
 
     print("Compiling models")
 

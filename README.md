@@ -6,7 +6,7 @@ A fast single image super-resolution (SISR) model for upscaling images without l
 
 - **Fast and scalable**: Instead of directly predicting the individual pixels of the upscaled image, Ultra Zoom uses a fast deterministic upscaling algorithm and then enhances the image through a residual pathway that operates primarily within the low-resolution subspace of a deep neural network.
 
-- **Next-gen architecture**: Ultra Zoom employs a next-generation convolutional neural network architecture that performs better than previous generations by employing Pixel Attention, wide non-linear activations, and a sub-pixel convolution decoder.
+- **Next-gen architecture**: Ultra Zoom employs a next-generation convolutional neural network architecture that performs better than previous generations by employing spatial attention, wide non-linear activations, and sub-pixel convolution.
 
 ## Pretrained Models
 
@@ -14,7 +14,17 @@ The following pretrained models are available on HuggingFace Hub.
 
 | Name | Zoom | Num Channels | Hidden Ratio | Encoder Layers | Total Parameters |
 |---|---|---|---|---|---|
-| [andrewdalpino/UltraZoom-2X](https://huggingface.co/andrewdalpino/UltraZoom-2X) | 2X | 64 | 2 | 20 | 3.1M |
+| [andrewdalpino/UltraZoom-2X](https://huggingface.co/andrewdalpino/UltraZoom-2X) | 2X | 48 | 2X | 20 | 1.8M |
+| [andrewdalpino/UltraZoom-4X](https://huggingface.co/andrewdalpino/UltraZoom-4X) | 4X | 96 | 2X | 28 | 10M |
+| [andrewdalpino/UltraZoom-8X](https://huggingface.co/andrewdalpino/UltraZoom-8X) | 8X | 192 | 2X | 36 | 54M |
+
+## Clone the Repository
+
+You'll need the code in the repository to load the pretrained weights or to train new models.
+
+```sh
+git clone https://github.com/andrewdalpino/UltraZoom
+```
 
 ## Install Project Dependencies
 
@@ -70,8 +80,8 @@ Then navigate to the dashboard using your favorite web browser.
 |---|---|---|---|
 | --train_images_path | "./dataset/train" | str | The path to the folder containing your training images. |
 | --test_images_path | "./dataset/test" | str | The path to the folder containing your testing images. |
-| --num_dataset_processes | 2 | int | The number of CPU processes to use to preprocess the dataset. |
-| --target_resolution | 512 | int | The number of pixels in the height and width dimensions of the training images. |
+| --num_dataset_processes | 4 | int | The number of CPU processes to use to preprocess the dataset. |
+| --target_resolution | 256 | int | The number of pixels in the height and width dimensions of the training images. |
 | --upscale_ratio | 2 | (2, 4, 8) | The upscaling or zoom factor. |
 | --blur_amount | 0.5 | float | The amount of Gaussian blur to apply to the degraded low-resolution image. |
 | --compression_amount | 0.2 | float | The amount of JPEG compression to apply to the degraded low-resolution image. |
@@ -80,13 +90,12 @@ Then navigate to the dashboard using your favorite web browser.
 | --contrast_jitter | 0.1 | float | The amount of jitter applied to the contrast of the training images. |
 | --saturation_jitter | 0.1 | float | The amount of jitter applied to the saturation of the training images. |
 | --hue_jitter | 0.1 | float | The amount of jitter applied to the hue of the training images. |
-| --batch_size | 8 | int | The number of training images to pass through the network at a time. |
-| --gradient_accumulation_steps | 16 | int | The number of batches to pass through the network before updating the model weights. |
+| --batch_size | 32 | int | The number of training images to pass through the network at a time. |
+| --gradient_accumulation_steps | 4 | int | The number of batches to pass through the network before updating the model weights. |
 | --num_epochs | 50 | int | The number of epochs to train for. |
 | --learning_rate | 5e-4 | float | The learning rate of the Adafactor optimizer. |
 | --max_gradient_norm | 2.0 | float | Clip gradients above this threshold norm before stepping. |
-| --num_channels | 64 | int | The number of channels within each encoder block. |
-| --num_heads | 8 | int | The number of independent filters per pixel attention layer. |
+| --num_channels | 48 | int | The number of channels within each encoder block. |
 | --hidden_ratio | 2 | (1, 2, 4) | The ratio of hidden channels to `num_channels` within the activation portion of each encoder block. |
 | --num_encoder_layers | 20 | int | The number of layers within the body of the encoder. |
 | --activation_checkpointing | False | bool | Should we use activation checkpointing? This will drastically reduce memory utilization during training at the cost of recomputing the forward pass. |

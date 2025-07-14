@@ -28,7 +28,7 @@ from torchmetrics.image import (
 )
 
 from data import ImageFolder
-from model import UltraZoom
+from src.ultrazoom.model import UltraZoom
 from loss import VGGLoss
 
 from tqdm import tqdm
@@ -131,13 +131,13 @@ def main():
         args.train_images_path,
         pre_transformer=Compose(
             [
+                RandomCrop(args.target_resolution),
                 ColorJitter(
                     brightness=args.brightness_jitter,
                     contrast=args.contrast_jitter,
-                    saturation=args.saturation_jitter,
                     hue=args.hue_jitter,
+                    saturation=args.saturation_jitter,
                 ),
-                RandomCrop(args.target_resolution),
             ]
         ),
     )

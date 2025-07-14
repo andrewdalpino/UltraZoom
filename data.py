@@ -21,7 +21,7 @@ from torchvision.transforms.v2.functional import InterpolationMode
 
 from PIL import Image
 
-from model import UltraZoom
+from src.ultrazoom.model import UltraZoom
 
 
 class ImageFolder(Dataset):

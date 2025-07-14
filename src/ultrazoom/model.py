@@ -58,6 +58,12 @@ class UltraZoom(Module, PyTorchModelHubMixin):
         self.upscale_ratio = upscale_ratio
 
     @property
+    def num_params(self) -> int:
+        """Total number of parameters in the model."""
+
+        return sum(param.numel() for param in self.parameters())
+
+    @property
     def num_trainable_params(self) -> int:
         return sum(param.numel() for param in self.parameters() if param.requires_grad)
 
@@ -102,6 +108,10 @@ class UltraZoom(Module, PyTorchModelHubMixin):
         z, _ = self.forward(x)
 
         z = torch.clamp(z, 0, 1)
+
+        z *= 255
+
+        z = z.to(torch.uint8)
 
         return z
 

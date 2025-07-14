@@ -18,9 +18,47 @@ The following pretrained models are available on HuggingFace Hub.
 | [andrewdalpino/UltraZoom-4X](https://huggingface.co/andrewdalpino/UltraZoom-4X) | 4X | 96 | 2X | 28 | 10M |
 | [andrewdalpino/UltraZoom-8X](https://huggingface.co/andrewdalpino/UltraZoom-8X) | 8X | 192 | 2X | 36 | 54M |
 
+## Pretrained Example
+
+If you'd just like to load the pretrained weights and do inference, getting started is as simple as in the example below. First, you'll need the `ultrazoom` Python package installed into your project.
+
+```sh
+pip install ultrazoom
+```
+
+Next, load the model weights from HuggingFace Hub and feed the network some images.
+
+```python
+import torch
+
+from torchvision.io import decode_image
+from torchvision.transforms.v2 import ToDtype, ToPILImage
+
+from ultrazoom.model import UltraZoom
+
+
+model_name = "andrewdalpino/UltraZoom-2X"
+image_path = "./dataset/bird.png"
+
+model = UltraZoom.from_pretrained(model_name)
+
+image_to_tensor = ToDtype(torch.float32, scale=True)
+tensor_to_pil = ToPILImage()
+
+image = decode_image(image_path, mode="RGB")
+
+x = image_to_tensor(image).unsqueeze(0)
+
+y_pred = model.upscale(x).squeeze(0)
+
+pil_image = tensor_to_pil(y_pred)
+
+pil_image.show()
+```
+
 ## Clone the Repository
 
-You'll need the code in the repository to load the pretrained weights or to train new models.
+You'll need the code in the repository to train new models and export them for production.
 
 ```sh
 git clone https://github.com/andrewdalpino/UltraZoom
@@ -131,9 +169,8 @@ python upscale.py --checkpoint_path="./checkpoints/fine-tuned.pt" --image_path="
 
 ## References
 
-
 >- Z. Liu, et al. A ConvNet for the 2020s, 2022.
 >- J. Yu, et al. Wide Activation for Efficient and Accurate Image Super-Resolution, 2018.
->- J. Johnson, et al. Perceptual Losses for Real_time Style Transfer and Super-Resolution, 2016.
+>- J. Johnson, et al. Perceptual Losses for Real-time Style Transfer and Super-Resolution, 2016.
 >- W. Shi, et al. Real-Time Single Image and Video Super-Resolution Using an Efficient Sub-Pixel Convolutional Neural Network, 2016.
 >- T. Salimans, et al. Weight Normalization: A Simple Reparameterization to Accelerate Training of Deep Neural Networks, OpenAI, 2016.

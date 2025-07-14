@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools >= 61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ultrazoom"
+description = "A fast single image super-resolution (SISR) model for upscaling images without loss of detail."
+version = "0.0.1"
+requires-python = ">= 3.10"
+dependencies = [
+  "torch==2.7.1",
+  "huggingface_hub==0.32.4"
+]
+authors = [
+  {name = "Andrew DalPino", email = "support@andrewdalpino.com"},
+]
+readme = "README.md"
+license = {text = "MIT"}
+
+[project.optional-dependencies]
+dev = ["mypy", "black", "build", "twine"]
+test = ["mypy", "black"]
+
+[project.urls]
+Homepage = "https://github.com/andrewdalpino/UltraZoom"
+Documentation = "https://github.com/andrewdalpino/UltraZoom/README.md"
+Source = "https://github.com/andrewdalpino/UltraZoom"

@@ -6,7 +6,7 @@ from torchvision.io import decode_image
 from torchvision.transforms.v2 import ToDtype
 from torchvision.utils import make_grid
 
-from model import UltraZoom
+from src.ultrazoom.model import UltraZoom
 
 import matplotlib
 import matplotlib.pyplot as plt

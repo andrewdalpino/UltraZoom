@@ -1,8 +1,8 @@
-torch==2.7.0
+torch==2.7.1
 torchmetrics==1.5.1
-torchvision==0.22.0
+torchvision==0.22.1
 tensorboard==2.19.0
 matplotlib==3.10.3
 PyQT5==5.15.11
-huggingface_hub==0.27.0
+huggingface_hub==0.32.4
 tqdm==4.66.6

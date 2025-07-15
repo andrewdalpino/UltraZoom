@@ -51,9 +51,9 @@ image = decode_image(image_path, mode="RGB")
 
 x = image_to_tensor(image).unsqueeze(0)
 
-y_pred = model.upscale(x).squeeze(0)
+y_pred = model.upscale(x)
 
-pil_image = tensor_to_pil(y_pred)
+pil_image = tensor_to_pil(y_pred.squeeze(0))
 
 pil_image.show()
 ```

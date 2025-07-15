@@ -23,7 +23,7 @@ The following pretrained models are available on HuggingFace Hub.
 If you'd just like to load the pretrained weights and do inference, getting started is as simple as in the example below. First, you'll need the `ultrazoom` Python package installed into your project.
 
 ```sh
-pip install ultrazoom
+pip install ultrazoom torchvision
 ```
 
 Next, load the model weights from HuggingFace Hub and feed the network some images.
@@ -49,9 +49,9 @@ image = decode_image(image_path, mode="RGB")
 
 x = image_to_tensor(image).unsqueeze(0)
 
-y_pred = model.upscale(x).squeeze(0)
+y_pred = model.upscale(x)
 
-pil_image = tensor_to_pil(y_pred)
+pil_image = tensor_to_pil(y_pred.squeeze(0))
 
 pil_image.show()
 ```

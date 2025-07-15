@@ -1,12 +1,14 @@
 # Ultra Zoom
 
-A fast single image super-resolution (SISR) model for upscaling images without loss of detail. Ultra Zoom uses a two-stage "zoom in and enhance" strategy that first applies a deterministic upscaling algorithm to the image and then uses a deep neural network to fill in the details. As such, Ultra Zoom requires less resources than upscalers that  necessarily predict every new pixel de novo - making it outstanding for real-time image processing.
+A fast single image super-resolution (SISR) model for upscaling images without loss of detail. Ultra Zoom uses a two-stage "zoom in and enhance" strategy that uses a fast deterministic upscaling algorithm to zoom in and then enhances the image through a residual pathway that operates primarily in the low-resolution subspace of a deep neural network. As such, Ultra Zoom requires less resources than upscalers that  necessarily predict every new pixel de novo - making it outstanding for real-time image processing.
 
 ## Key Features
 
-- **Fast and scalable**: Instead of directly predicting the individual pixels of the upscaled image, Ultra Zoom uses a fast deterministic upscaling algorithm and then enhances the image through a residual pathway that operates primarily within the low-resolution subspace of a deep neural network.
+- **Fast and scalable**: Instead of predicting the individual pixels of the upscaled image, Ultra Zoom uses a unique "zoom in and enhance" approach that combines the speed of bicubic interpolation with the power of a deep neural network.
 
-- **Next-gen architecture**: Ultra Zoom employs a next-generation convolutional neural network architecture that performs better than previous generations by employing spatial attention, wide non-linear activations, and sub-pixel convolution.
+- **Denoising and Deblurring**: During the enhancement stage, the model removes multiple types of noise and blur making images look crisp and clean.
+
+- **Next-gen architecture**: Ultra Zoom employs a convolutional neural network architecture that performs better than previous generations by employing a modern architecture with spatial attention, wide non-linear activations, and sub-pixel convolution.
 
 ## Pretrained Models
 
@@ -20,10 +22,10 @@ The following pretrained models are available on HuggingFace Hub.
 
 ## Pretrained Example
 
-If you'd just like to load the pretrained weights and do inference, getting started is as simple as in the example below. First, you'll need the `ultrazoom` Python package installed into your project.
+If you'd just like to load the pretrained weights and do inference, getting started is as simple as in the example below. First, you'll need the `ultrazoom` and `torchvision` Python packages installed into your project.
 
 ```sh
-pip install ultrazoom
+pip install ultrazoom torchvision
 ```
 
 Next, load the model weights from HuggingFace Hub and feed the network some images.

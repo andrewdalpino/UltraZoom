@@ -4,9 +4,9 @@ A fast single image super-resolution (SISR) model for upscaling images without l
 
 ## Key Features
 
-- **Fast and scalable**: Instead of predicting the individual pixels of the upscaled image, Ultra Zoom uses a unique "zoom in and enhance" approach that combines the speed of bicubic interpolation with the power of a deep neural network.
+- **Fast and scalable**: Instead of predicting the individual pixels of the upscaled image, Ultra Zoom uses a unique "zoom in and enhance" approach that combines the speed of deterministic bicubic interpolation with the power of a deep neural network.
 
-- **Full RGB**: Unlike many efficient SR models that only operate in the luminance domain, Ultra Zoom operates within the full RGB color spectrum enhancing both luminance and chrominance for the best possible quality.
+- **Full RGB**: Unlike many efficient SR models that only operate in the luminance domain, Ultra Zoom operates within the full RGB color domain enhancing both luminance and chrominance for the best possible quality.
 
 - **Denoising and Deblurring**: During the enhancement stage, the model removes multiple types of noise and blur making images look crisp and clean.
 

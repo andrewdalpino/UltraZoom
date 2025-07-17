@@ -270,7 +270,7 @@ def main():
             f"Pixel L2: {average_l2_loss:.4},",
             f"VGG22 L2: {average_vgg22_loss:.4},",
             f"VGG54 L2: {average_vgg54_loss:.4},",
-            f"Gradient Norm: {average_gradient_norm:.4},",
+            f"Gradient Norm: {average_gradient_norm:.4}",
         )
 
         if epoch % args.eval_interval == 0:

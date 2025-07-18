@@ -41,7 +41,7 @@ class ImageFolder(Dataset):
     ):
         if upscale_ratio not in UltraZoom.AVAILABLE_UPSCALE_RATIOS:
             raise ValueError(
-                f"Upscale ratio must be either 2, 4, or 8, {upscale_ratio} given."
+                f"Upscale ratio must be either 2, 3, or 4, {upscale_ratio} given."
             )
 
         if target_resolution % upscale_ratio != 0:

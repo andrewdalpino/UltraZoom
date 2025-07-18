@@ -1,6 +1,6 @@
 # Ultra Zoom
 
-A fast single image super-resolution (SISR) model for upscaling images without loss of detail. Ultra Zoom uses a two-stage "zoom in and enhance" strategy that uses a fast deterministic upscaling algorithm to zoom in and then enhances the image through a residual pathway that operates primarily in the low-resolution subspace of a deep neural network. As such, Ultra Zoom requires less resources than upscalers that  necessarily predict every new pixel de novo - making it outstanding for real-time image processing.
+A fast single image super-resolution (SISR) model for upscaling images without loss of detail. Ultra Zoom uses a two-stage "zoom in and enhance" strategy that uses a fast deterministic upscaling algorithm to zoom in and then enhances the image through a residual pathway that operates primarily in the low-resolution subspace of a deep neural network. As such, Ultra Zoom requires less resources than upscalers that predict every new pixel de novo - making it outstanding for real-time image processing.
 
 ## Key Features
 
@@ -10,8 +10,6 @@ A fast single image super-resolution (SISR) model for upscaling images without l
 
 - **Denoising and Deblurring**: During the enhancement stage, the model removes multiple types of noise and blur making images look crisp and clean.
 
-- **Next-gen architecture**: Ultra Zoom employs a convolutional neural network architecture that performs better than previous generations by employing a modern architecture with spatial attention, wide non-linear activations, and sub-pixel convolution.
-
 ## Pretrained Models
 
 The following pretrained models are available on HuggingFace Hub.
@@ -19,8 +17,8 @@ The following pretrained models are available on HuggingFace Hub.
 | Name | Zoom | Num Channels | Hidden Ratio | Encoder Layers | Total Parameters |
 |---|---|---|---|---|---|
 | [andrewdalpino/UltraZoom-2X](https://huggingface.co/andrewdalpino/UltraZoom-2X) | 2X | 48 | 2X | 20 | 1.8M |
-| [andrewdalpino/UltraZoom-4X](https://huggingface.co/andrewdalpino/UltraZoom-4X) | 4X | 96 | 2X | 28 | 10M |
-| [andrewdalpino/UltraZoom-8X](https://huggingface.co/andrewdalpino/UltraZoom-8X) | 8X | 192 | 2X | 36 | 54M |
+| [andrewdalpino/UltraZoom-3X](https://huggingface.co/andrewdalpino/UltraZoom-3X) | 3X | 54 | 2X | 30 | 3.5M |
+| [andrewdalpino/UltraZoom-4X](https://huggingface.co/andrewdalpino/UltraZoom-4X) | 4X | 96 | 2X | 40 | 14M |
 
 ## Pretrained Example
 

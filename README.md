@@ -12,6 +12,8 @@ A fast single image super-resolution (SISR) model for upscaling images without l
 
 ## Demo
 
+View at full resolution for best results. More comparisons can be found [here](https://github.com/andrewdalpino/UltraZoom/tree/master/docs/images).
+
 ![UltraZoom 2X Comparison](https://raw.githubusercontent.com/andrewdalpino/UltraZoom/master/docs/images/cat-2x.png)
 
 ## Pretrained Models

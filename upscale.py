@@ -1,12 +1,10 @@
-import time
-
 from argparse import ArgumentParser
 
 import torch
 
 from torchvision.io import decode_image
 from torchvision.transforms.v2 import ToDtype
-from torchvision.utils import make_grid, save_image
+from torchvision.utils import make_grid
 
 from src.ultrazoom.model import UltraZoom
 
@@ -65,10 +63,6 @@ def main():
     )
 
     grid = make_grid(pair, nrow=2)
-
-    current_timestamp = time.time()
-
-    save_image(grid, f"{current_timestamp}.png")
 
     grid = grid.permute(1, 2, 0).to("cpu")
 

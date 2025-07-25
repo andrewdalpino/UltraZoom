@@ -1,17 +1,16 @@
+import time
+
 from argparse import ArgumentParser
 
 import torch
 
 from torchvision.io import decode_image
 from torchvision.transforms.v2 import ToDtype
-from torchvision.utils import make_grid
+from torchvision.utils import make_grid, save_image
 
 from src.ultrazoom.model import UltraZoom
 
-import matplotlib
 import matplotlib.pyplot as plt
-
-matplotlib.use("qt5agg")
 
 
 def main():
@@ -65,11 +64,15 @@ def main():
         dim=0,
     )
 
-    pair = pair.to("cpu")
-
     grid = make_grid(pair, nrow=2)
 
-    plt.imshow(grid.permute(1, 2, 0))
+    current_timestamp = time.time()
+
+    save_image(grid, f"{current_timestamp}.png")
+
+    grid = grid.permute(1, 2, 0).to("cpu")
+
+    plt.imshow(grid)
     plt.show()
 
 

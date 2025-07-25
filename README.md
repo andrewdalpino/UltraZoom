@@ -10,6 +10,10 @@ A fast single image super-resolution (SISR) model for upscaling images without l
 
 - **Denoising and Deblurring**: During the enhancement stage, the model removes multiple types of noise and blur making images look crisp and clean.
 
+## Demo
+
+![UltraZoom 2X Comparison](https://raw.githubusercontent.com/andrewdalpino/UltraZoom/master/docs/images/cat-2x.png)
+
 ## Pretrained Models
 
 The following pretrained models are available on HuggingFace Hub.

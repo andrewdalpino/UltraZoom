@@ -31,7 +31,7 @@ class UltraZoom(Module, PyTorchModelHubMixin):
     details using a deep neural network.
     """
 
-    AVAILABLE_UPSCALE_RATIOS = {2, 3, 4}
+    AVAILABLE_UPSCALE_RATIOS = {1, 2, 3, 4, 8}
 
     AVAILABLE_HIDDEN_RATIOS = {1, 2, 4}
 
@@ -229,7 +229,13 @@ class SubpixelConv2d(Module):
     def __init__(self, in_channels: int, upscale_ratio: int):
         super().__init__()
 
-        assert upscale_ratio in {2, 3, 4}, "Upscale ratio must be either 2, 3, or 4."
+        assert upscale_ratio in {
+            1,
+            2,
+            3,
+            4,
+            8,
+        }, "Upscale ratio must be either 1, 2, 3, 4, or 8."
 
         out_channels = 3 * upscale_ratio**2
 

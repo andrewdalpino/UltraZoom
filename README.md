@@ -15,6 +15,7 @@ A fast single image super-resolution (SISR) model for upscaling images without l
 View at full resolution for best results. More comparisons can be found [here](https://github.com/andrewdalpino/UltraZoom/tree/master/docs/images).
 
 ![UltraZoom 2X Comparison](https://raw.githubusercontent.com/andrewdalpino/UltraZoom/master/docs/images/cat-2x.png)
+![UltraZoom 4X Comparison](https://raw.githubusercontent.com/andrewdalpino/UltraZoom/master/docs/images/flower-4x.png)
 
 ## Pretrained Models
 
@@ -34,7 +35,7 @@ If you'd just like to load the pretrained weights and do inference, getting star
 pip install ultrazoom torchvision
 ```
 
-Next, load the model weights from HuggingFace Hub and feed the network some images.
+Next, load the model weights from HuggingFace Hub and feed the network some images. Note that the input to the `upscale()` method is a normalized [0, 1] 4D tensor of shape [b, 3, w, h] where b is the batch dimension, and w and height are the width and height respectively.
 
 ```python
 import torch
@@ -128,7 +129,7 @@ Then navigate to the dashboard using your favorite web browser.
 | --test_images_path | "./dataset/test" | str | The path to the folder containing your testing images. |
 | --num_dataset_processes | 4 | int | The number of CPU processes to use to preprocess the dataset. |
 | --target_resolution | 256 | int | The number of pixels in the height and width dimensions of the training images. |
-| --upscale_ratio | 2 | (2, 4, 8) | The upscaling or zoom factor. |
+| --upscale_ratio | 2 | (1, 2, 3, 4, 8) | The upscaling or zoom factor. |
 | --blur_amount | 0.5 | float | The amount of Gaussian blur to apply to the degraded low-resolution image. |
 | --compression_amount | 0.2 | float | The amount of JPEG compression to apply to the degraded low-resolution image. |
 | --noise_amount | 0.02 | float | The amount of Gaussian noise to add to the degraded low-resolution image. |
@@ -138,7 +139,7 @@ Then navigate to the dashboard using your favorite web browser.
 | --hue_jitter | 0.1 | float | The amount of jitter applied to the hue of the training images. |
 | --batch_size | 32 | int | The number of training images to pass through the network at a time. |
 | --gradient_accumulation_steps | 4 | int | The number of batches to pass through the network before updating the model weights. |
-| --num_epochs | 50 | int | The number of epochs to train for. |
+| --num_epochs | 100 | int | The number of epochs to train for. |
 | --learning_rate | 5e-4 | float | The learning rate of the Adafactor optimizer. |
 | --max_gradient_norm | 2.0 | float | Clip gradients above this threshold norm before stepping. |
 | --num_channels | 48 | int | The number of channels within each encoder block. |

@@ -1,10 +1,12 @@
+from time import time
+
 from argparse import ArgumentParser
 
 import torch
 
 from torchvision.io import decode_image
 from torchvision.transforms.v2 import ToDtype
-from torchvision.utils import make_grid
+from torchvision.utils import make_grid, save_image
 
 from src.ultrazoom.model import UltraZoom
 
@@ -68,6 +70,9 @@ def main():
 
     plt.imshow(grid)
     plt.show()
+
+    if "y" in input("Save upscaled image? (yes|no): ").lower():
+        save_image(y_pred.squeeze(0), f"{time()}.png")
 
 
 if __name__ == "__main__":

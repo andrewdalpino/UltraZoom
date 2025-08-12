@@ -104,16 +104,27 @@ class UltraZoom(Module, PyTorchModelHubMixin):
         return z, s
 
     @torch.no_grad()
-    def upscale(self, x: Tensor) -> Tensor:
-        z, _ = self.forward(x)
+    def upscale(self, x: Tensor, steps: int = 1) -> Tensor:
+        """
+        Upscale the input image by the specified number of steps.
 
-        z = torch.clamp(z, 0, 1)
+        Args:
+            x (Tensor): Input image tensor of shape (B, C, H, W).
+            steps (int): Number of upscaling steps to perform. Default is 1.
+        """
 
-        z *= 255
+        assert steps > 0, "Number of steps must be greater than 0."
 
-        z = z.to(torch.uint8)
+        for _ in range(steps):
+            x, _ = self.forward(x)
 
-        return z
+            x = torch.clamp(x, 0, 1)
+
+        x *= 255
+
+        x = x.to(torch.uint8)
+
+        return x
 
 
 class Encoder(Module):

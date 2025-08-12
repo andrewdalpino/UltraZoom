@@ -41,7 +41,7 @@ Next, load the model weights from HuggingFace Hub and feed the network some imag
 ```python
 import torch
 
-from torchvision.io import decode_image
+from torchvision.io import decode_image, ImageReadMode
 from torchvision.transforms.v2 import ToDtype, ToPILImage
 
 from ultrazoom.model import UltraZoom
@@ -55,7 +55,7 @@ model = UltraZoom.from_pretrained(model_name)
 image_to_tensor = ToDtype(torch.float32, scale=True)
 tensor_to_pil = ToPILImage()
 
-image = decode_image(image_path, mode="RGB")
+image = decode_image(image_path, mode=ImageReadMode.RGB)
 
 x = image_to_tensor(image).unsqueeze(0)
 
@@ -84,6 +84,16 @@ python -m venv ./.venv
 source ./.venv/bin/activate
 
 pip install -r requirements.txt
+```
+
+## To improve install speed of project dependencies you might want to use a tool called *uv*
+
+> Learn more on their website https://docs.astral.sh/uv/
+
+> Here is an example to install requirements.txt using *uv*
+
+```sh
+uv pip install -r requirements.txt
 ```
 
 ## Training

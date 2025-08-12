@@ -8,3 +8,4 @@ huggingface_hub==0.32.4
 onnx==1.18.0
 onnxscript==0.3.2
 tqdm==4.66.6
+safetensors~=0.4.3

@@ -9,37 +9,13 @@ insert_final_newline = false
 max_line_length = 72
 tab_width = 4
 
-[*.proto]
-indent_size = 2
-indent_style = space
-tab_width = 2
-
-[{*.ant,*.fxml,*.jhm,*.jnlp,*.jrxml,*.rng,*.tld,*.wsdl,*.xml,*.xsd,*.xsl,*.xslt,*.xul}]
-indent_style = space
-
-[{*.bash,*.sh,*.zsh}]
-indent_size = 2
-indent_style = space
-tab_width = 2
-
 [{*.har,*.json,*.jsonc,.prettierrc}]
 indent_size = 2
-indent_style = space
-
-[{*.htm,*.html,*.sht,*.shtm,*.shtml}]
 indent_style = space
 
 [{*.markdown,*.md}]
 indent_style = space
 max_line_length = unset
-
-[{*.neon,*.yaml,*.yml}]
-indent_size = 2
-
-[{*.pb,*.textproto,*.txtpb}]
-indent_size = 2
-indent_style = space
-tab_width = 2
 
 [{*.py,*.pyw}]
 indent_style = space
@@ -49,8 +25,3 @@ indent_style = space
 indent_size = 2
 tab_width = 2
 max_line_length = unset
-
-# C/C++/CUDA
-[*.{cpp,hpp,cxx,cc,c,h,cu,cuh}]
-indent_style = space
-indent_size = 2

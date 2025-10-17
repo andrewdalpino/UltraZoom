@@ -116,7 +116,7 @@ class TestUltraZoom(BaseModelTest):
             result.shape[2:],
             (self.height * self.upscale_ratio, self.width * self.upscale_ratio),
         )
-        self.assertEqual(result.dtype, torch.uint8)
+        self.assertEqual(result.dtype, torch.float32)
 
     def test_upscale_multi_step(self):
         steps = 2

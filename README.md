@@ -86,16 +86,6 @@ source ./.venv/bin/activate
 pip install -r requirements.txt
 ```
 
-## To improve install speed of project dependencies you might want to use a tool called *uv*
-
-> Learn more on their website https://docs.astral.sh/uv/
-
-> Here is an example to install requirements.txt using *uv*
-
-```sh
-uv pip install -r requirements.txt
-```
-
 ## Training
 
 To start training with the default settings, add your training and testing images to the `./dataset/train` and `./dataset/test` folders respectively and call the pretraining script like in the example below. If you are looking for good training sets to start with we recommend the `DIV2K` and/or `Flicker2K` datasets.

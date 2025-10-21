@@ -1,10 +1,11 @@
-torch==2.7.1
-torchmetrics==1.5.1
-torchvision==0.22.1
+torch==2.9.0
+torchmetrics==1.8.2
+torchvision==0.24.0
 tensorboard==2.19.0
 matplotlib==3.10.3
 huggingface_hub==0.32.4
-onnx==1.18.0
-onnxscript==0.3.2
+onnx==1.19.1
+onnxscript==0.5.4
+onnxruntime==1.23.1
 tqdm==4.66.6
 safetensors~=0.4.3

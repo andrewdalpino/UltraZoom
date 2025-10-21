@@ -290,6 +290,18 @@ class SubpixelConv2d(Module):
         return z
 
 
+class ONNXModel(Module):
+    """A wrapper class for exporting to ONNX format."""
+
+    def __init__(self, model: UltraZoom):
+        super().__init__()
+
+        self.model = model
+
+    def forward(self, x: Tensor) -> Tensor:
+        return self.model.upscale(x)
+
+
 class Bouncer(Module):
     """A critic network for detecting real and fake images for adversarial training."""
 

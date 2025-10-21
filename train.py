@@ -70,7 +70,7 @@ def main():
     )
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--run_dir_path", default="./runs", type=str)
-    parser.add_argument("--device", default="cuda", type=str)
+    parser.add_argument("--device", default="cpu", type=str)
     parser.add_argument("--seed", default=None, type=int)
 
     args = parser.parse_args()
@@ -106,7 +106,7 @@ def main():
 
     dtype = (
         torch.bfloat16
-        if ("cuda" in args.device and is_bf16_supported()) or args.device == "mps"
+        if "cuda" in args.device and is_bf16_supported()
         else torch.float32
     )
 
@@ -186,13 +186,9 @@ def main():
 
     optimizer = AdamW(model.parameters(), lr=args.learning_rate)
 
-    bicubic_psnr_metric = PeakSignalNoiseRatio().to(args.device)
-    bicubic_ssim_metric = StructuralSimilarityIndexMeasure().to(args.device)
-    bicubic_vif_metric = VisualInformationFidelity().to(args.device)
-
-    enhanced_psnr_metric = PeakSignalNoiseRatio().to(args.device)
-    enhanced_ssim_metric = StructuralSimilarityIndexMeasure().to(args.device)
-    enhanced_vif_metric = VisualInformationFidelity().to(args.device)
+    psnr_metric = PeakSignalNoiseRatio().to(args.device)
+    ssim_metric = StructuralSimilarityIndexMeasure().to(args.device)
+    vif_metric = VisualInformationFidelity().to(args.device)
 
     starting_epoch = 1
 
@@ -223,7 +219,7 @@ def main():
             y = y.to(args.device, non_blocking=True)
 
             with amp_context:
-                y_pred, y_bicubic = model.forward(x)
+                y_pred, _ = model.forward(x)
 
                 l2_loss = l2_loss_function(y_pred, y)
                 vgg22_loss, vgg54_loss = vgg_loss_function(y_pred, y)
@@ -280,45 +276,29 @@ def main():
                 x = x.to(args.device, non_blocking=True)
                 y = y.to(args.device, non_blocking=True)
 
-                y_pred, y_bicubic = model.test_compare(x)
+                y_pred, _ = model.forward(x)
 
-                bicubic_psnr_metric.update(y_bicubic, y)
-                bicubic_ssim_metric.update(y_bicubic, y)
-                bicubic_vif_metric.update(y_bicubic, y)
+                psnr_metric.update(y_pred, y)
+                ssim_metric.update(y_pred, y)
+                vif_metric.update(y_pred, y)
 
-                enhanced_psnr_metric.update(y_pred, y)
-                enhanced_ssim_metric.update(y_pred, y)
-                enhanced_vif_metric.update(y_pred, y)
+            psnr = psnr_metric.compute()
+            ssim = ssim_metric.compute()
+            vif = vif_metric.compute()
 
-            bicubic_psnr = bicubic_psnr_metric.compute()
-            bicubic_ssim = bicubic_ssim_metric.compute()
-            bicubic_vif = bicubic_vif_metric.compute()
-
-            enhanced_psnr = enhanced_psnr_metric.compute()
-            enhanced_ssim = enhanced_ssim_metric.compute()
-            enhanced_vif = enhanced_vif_metric.compute()
-
-            logger.add_scalar("Bicubic PSNR", bicubic_psnr, epoch)
-            logger.add_scalar("Bicubic SSIM", bicubic_ssim, epoch)
-            logger.add_scalar("Bicubic VIF", bicubic_vif, epoch)
-
-            logger.add_scalar("Enhanced PSNR", enhanced_psnr, epoch)
-            logger.add_scalar("Enhanced SSIM", enhanced_ssim, epoch)
-            logger.add_scalar("Enhanced VIF", enhanced_vif, epoch)
+            logger.add_scalar("PSNR", psnr, epoch)
+            logger.add_scalar("SSIM", ssim, epoch)
+            logger.add_scalar("VIF", vif, epoch)
 
             print(
-                f"PSNR: {bicubic_psnr:.4} → {enhanced_psnr:.4},",
-                f"SSIM: {bicubic_ssim:.4} → {enhanced_ssim:.4},",
-                f"VIF: {bicubic_vif:.4} → {enhanced_vif:.4}",
+                f"PSNR: {psnr:.4},",
+                f"SSIM: {ssim:.4},",
+                f"VIF: {vif:.4}",
             )
 
-            bicubic_psnr_metric.reset()
-            bicubic_ssim_metric.reset()
-            bicubic_vif_metric.reset()
-
-            enhanced_psnr_metric.reset()
-            enhanced_ssim_metric.reset()
-            enhanced_vif_metric.reset()
+            psnr_metric.reset()
+            ssim_metric.reset()
+            vif_metric.reset()
 
             model.train()
 

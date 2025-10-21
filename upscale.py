@@ -27,9 +27,7 @@ def main():
     if "cuda" in args.device and not torch.cuda.is_available():
         raise RuntimeError("Cuda is not available.")
 
-    checkpoint = torch.load(
-        args.checkpoint_path, map_location=args.device, weights_only=True
-    )
+    checkpoint = torch.load(args.checkpoint_path, map_location="cpu", weights_only=True)
 
     model = UltraZoom(**checkpoint["model_args"])
 
@@ -37,11 +35,11 @@ def main():
 
     model = torch.compile(model)
 
-    model = model.to(args.device)
-
     model.load_state_dict(checkpoint["model"])
 
-    model.remove_weight_norms()
+    model.remove_parameterizations()
+
+    model = model.to(args.device)
 
     model.eval()
 

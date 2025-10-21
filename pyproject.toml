@@ -13,7 +13,7 @@ dependencies = [
   "safetensors~=0.4.3"
 ]
 authors = [
-  {name = "Andrew DalPino", email = "support@andrewdalpino.com"},
+  {name = "Andrew DalPino"},
 ]
 readme = "README.md"
 license = {text = "MIT"}

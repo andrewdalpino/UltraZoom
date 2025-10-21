@@ -184,3 +184,5 @@ python upscale.py --checkpoint_path="./checkpoints/fine-tuned.pt" --image_path="
 >- J. Johnson, et al. Perceptual Losses for Real-time Style Transfer and Super-Resolution, 2016.
 >- W. Shi, et al. Real-Time Single Image and Video Super-Resolution Using an Efficient Sub-Pixel Convolutional Neural Network, 2016.
 >- T. Salimans, et al. Weight Normalization: A Simple Reparameterization to Accelerate Training of Deep Neural Networks, OpenAI, 2016.
+>- T. Miyato, et al. Spectral Normalization for Generative Adversarial Networks, ICLR, 2018.
+>- A. Jolicoeur-Martineau. The Relativistic Discriminator: A Key Element Missing From Standard GAN, 2018.

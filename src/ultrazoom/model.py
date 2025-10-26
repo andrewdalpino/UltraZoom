@@ -1,3 +1,7 @@
+from math import sqrt
+
+from typing import Self
+
 from functools import partial
 
 import torch
@@ -16,11 +20,16 @@ from torch.nn import (
     PixelShuffle,
     AdaptiveAvgPool2d,
     Flatten,
-    Identity,
+    Parameter,
+)
+
+from torch.nn.utils.parametrize import (
+    register_parametrization,
+    is_parametrized,
+    remove_parametrizations,
 )
 
 from torch.nn.utils.parametrizations import weight_norm, spectral_norm
-from torch.nn.utils.parametrize import is_parametrized, remove_parametrizations
 from torch.utils.checkpoint import checkpoint as torch_checkpoint
 
 from huggingface_hub import PyTorchModelHubMixin
@@ -36,7 +45,7 @@ class UltraZoom(Module, PyTorchModelHubMixin):
     details using a deep neural network.
     """
 
-    AVAILABLE_UPSCALE_RATIOS = {1, 2, 3, 4, 8}
+    AVAILABLE_UPSCALE_RATIOS = {1, 2, 3, 4}
 
     AVAILABLE_HIDDEN_RATIOS = {1, 2, 4}
 
@@ -72,11 +81,23 @@ class UltraZoom(Module, PyTorchModelHubMixin):
     def num_trainable_params(self) -> int:
         return sum(param.numel() for param in self.parameters() if param.requires_grad)
 
+    def freeze_parameters(self) -> None:
+        """Freeze all model parameters to prevent them from being updated during training."""
+
+        for param in self.parameters():
+            param.requires_grad = False
+
     def add_weight_norms(self) -> None:
         """Add weight normalization parameterization to the network."""
 
         self.encoder.add_weight_norms()
         self.decoder.add_weight_norms()
+
+    def add_lora_adapters(self, rank: int, alpha: float) -> None:
+        """Add LoRA adapters to all convolutional layers in the network."""
+
+        self.encoder.add_lora_adapters(rank, alpha)
+        self.decoder.add_lora_adapters(rank, alpha)
 
     def remove_parameterizations(self) -> None:
         """Remove all network parameterizations."""
@@ -157,6 +178,14 @@ class Encoder(Module):
         for layer in self.body:
             layer.add_weight_norms()
 
+    def add_lora_adapters(self, rank: int, alpha: float) -> None:
+        register_parametrization(
+            self.stem, "weight", ChannelLoRA(self.stem, rank, alpha)
+        )
+
+        for layer in self.body:
+            layer.add_lora_adapters(rank, alpha)
+
     def enable_activation_checkpointing(self) -> None:
         """
         Instead of memorizing the activations of the forward pass, recompute them
@@ -186,6 +215,10 @@ class EncoderBlock(Module):
     def add_weight_norms(self) -> None:
         self.stage1.add_weight_norms()
         self.stage2.add_weight_norms()
+
+    def add_lora_adapters(self, rank: int, alpha: float) -> None:
+        self.stage1.add_lora_adapters(rank, alpha)
+        self.stage2.add_lora_adapters(rank, alpha)
 
     def forward(self, x: Tensor) -> Tensor:
         z = self.stage1.forward(x)
@@ -221,6 +254,19 @@ class SpatialAttention(Module):
         self.depthwise = weight_norm(self.depthwise)
         self.pointwise = weight_norm(self.pointwise)
 
+    def add_lora_adapters(self, rank: int, alpha: float) -> None:
+        register_parametrization(
+            self.depthwise,
+            "weight",
+            ChannelLoRA(self.depthwise, rank, alpha),
+        )
+
+        register_parametrization(
+            self.pointwise,
+            "weight",
+            ChannelLoRA(self.pointwise, rank, alpha),
+        )
+
     def forward(self, x: Tensor) -> Tensor:
         z = self.depthwise.forward(x)
         z = self.pointwise.forward(z)
@@ -252,6 +298,19 @@ class InvertedBottleneck(Module):
         self.conv1 = weight_norm(self.conv1)
         self.conv2 = weight_norm(self.conv2)
 
+    def add_lora_adapters(self, rank: int, alpha: float) -> None:
+        register_parametrization(
+            self.conv1,
+            "weight",
+            ChannelLoRA(self.conv1, rank, alpha),
+        )
+
+        register_parametrization(
+            self.conv2,
+            "weight",
+            ChannelLoRA(self.conv2, rank, alpha),
+        )
+
     def forward(self, x: Tensor) -> Tensor:
         z = self.conv1.forward(x)
         z = self.silu.forward(z)
@@ -271,8 +330,7 @@ class SubpixelConv2d(Module):
             2,
             3,
             4,
-            8,
-        }, "Upscale ratio must be either 1, 2, 3, 4, or 8."
+        }, "Upscale ratio must be either 1, 2, 3, or 4."
 
         out_channels = 3 * upscale_ratio**2
 
@@ -282,6 +340,13 @@ class SubpixelConv2d(Module):
 
     def add_weight_norms(self) -> None:
         self.conv = weight_norm(self.conv)
+
+    def add_lora_adapters(self, rank: int, alpha: float) -> None:
+        register_parametrization(
+            self.conv,
+            "weight",
+            ChannelLoRA(self.conv, rank, alpha),
+        )
 
     def forward(self, x: Tensor) -> Tensor:
         z = self.conv.forward(x)
@@ -305,12 +370,13 @@ class ONNXModel(Module):
 class Bouncer(Module):
     """A critic network for detecting real and fake images for adversarial training."""
 
-    AVAILABLE_MODEL_SIZES = {"small", "medium", "large"}
+    AVAILABLE_MODEL_SIZES = {"small", "medium", "large", "x-large"}
 
-    def __init__(self, model_size: str):
-        super().__init__()
+    @classmethod
+    def from_preconfigured(cls, model_size: str) -> Self:
+        """Return a new preconfigured bouncer model."""
 
-        assert model_size in self.AVAILABLE_MODEL_SIZES, "Invalid model size."
+        assert model_size in cls.AVAILABLE_MODEL_SIZES, "Invalid model size."
 
         num_primary_layers = 3
         num_quaternary_layers = 3
@@ -339,6 +405,38 @@ class Bouncer(Module):
                 num_tertiary_channels = 512
                 num_tertiary_layers = 24
                 num_quaternary_channels = 1024
+
+            case "x-large":
+                num_primary_channels = 192
+                num_secondary_channels = 384
+                num_secondary_layers = 6
+                num_tertiary_channels = 768
+                num_tertiary_layers = 36
+                num_quaternary_channels = 1536
+
+        return cls(
+            num_primary_channels,
+            num_primary_layers,
+            num_secondary_channels,
+            num_secondary_layers,
+            num_tertiary_channels,
+            num_tertiary_layers,
+            num_quaternary_channels,
+            num_quaternary_layers,
+        )
+
+    def __init__(
+        self,
+        num_primary_channels: int,
+        num_primary_layers: int,
+        num_secondary_channels: int,
+        num_secondary_layers: int,
+        num_tertiary_channels: int,
+        num_tertiary_layers: int,
+        num_quaternary_channels: int,
+        num_quaternary_layers: int,
+    ):
+        super().__init__()
 
         self.detector = Detector(
             num_primary_channels,
@@ -376,19 +474,27 @@ class Bouncer(Module):
                 for name in params:
                     remove_parametrizations(module, name)
 
-    def forward(self, x: Tensor) -> Tensor:
-        z = self.detector.forward(x)
+    def forward(self, x: Tensor) -> tuple[Tensor, ...]:
+        z1, z2, z3, z4 = self.detector.forward(x)
 
-        z = self.pool.forward(z)
-        z = self.flatten.forward(z)
+        z5 = self.pool.forward(z4)
+        z5 = self.flatten.forward(z5)
 
-        z = self.classifier.forward(z)
+        z5 = self.classifier.forward(z5)
 
-        return z
+        return z1, z2, z3, z4, z5
+
+    @torch.no_grad()
+    def predict(self, x: Tensor) -> Tensor:
+        """Return the probability that the input image is real."""
+
+        _, _, _, _, z5 = self.forward(x)
+
+        return z5
 
 
 class Detector(Module):
-    """A deep feature extractor network using convolutions."""
+    """A deep feature extraction network using convolutions."""
 
     def __init__(
         self,
@@ -419,55 +525,33 @@ class Detector(Module):
             num_quaternary_layers > 0
         ), "Number of quaternary layers must be greater than 0."
 
-        self.stem = Conv2d(3, num_primary_channels, kernel_size=4, stride=4)
-
-        stage1 = Sequential()
-
-        stage1.extend(
-            [
-                DetectorBlock(num_primary_channels, num_primary_channels)
-                for _ in range(num_primary_layers)
-            ]
+        stage1 = Sequential(
+            PixelCrush(3, num_primary_channels, 2),
+            *[DetectorBlock(num_primary_channels) for _ in range(num_primary_layers)],
         )
 
-        stage2 = Sequential()
-
-        stage2.append(
-            DetectorBlock(num_primary_channels, num_secondary_channels, stride=2)
+        stage2 = Sequential(
+            PixelCrush(num_primary_channels, num_secondary_channels, 2),
+            *[
+                DetectorBlock(num_secondary_channels)
+                for _ in range(num_secondary_layers)
+            ],
         )
 
-        stage2.extend(
-            [
-                DetectorBlock(num_secondary_channels, num_secondary_channels)
-                for _ in range(num_secondary_layers - 1)
-            ]
+        stage3 = Sequential(
+            PixelCrush(num_secondary_channels, num_tertiary_channels, 2),
+            *[DetectorBlock(num_tertiary_channels) for _ in range(num_tertiary_layers)],
         )
 
-        stage3 = Sequential()
-
-        stage3.append(
-            DetectorBlock(num_secondary_channels, num_tertiary_channels, stride=2)
+        stage4 = Sequential(
+            PixelCrush(num_tertiary_channels, num_quaternary_channels, 2),
+            *[
+                DetectorBlock(num_quaternary_channels)
+                for _ in range(num_quaternary_layers)
+            ],
         )
 
-        stage3.extend(
-            [
-                DetectorBlock(num_tertiary_channels, num_tertiary_channels)
-                for _ in range(num_tertiary_layers - 1)
-            ]
-        )
-
-        stage4 = Sequential()
-
-        stage4.append(
-            DetectorBlock(num_tertiary_channels, num_quaternary_channels, stride=2)
-        )
-
-        stage4.extend(
-            [
-                DetectorBlock(num_quaternary_channels, num_quaternary_channels)
-                for _ in range(num_quaternary_layers - 1)
-            ]
-        )
+        self.checkpoint = lambda layer, x: layer(x)
 
         self.stage1 = stage1
         self.stage2 = stage2
@@ -475,8 +559,6 @@ class Detector(Module):
         self.stage4 = stage4
 
     def add_spectral_norms(self) -> None:
-        self.stem = spectral_norm(self.stem)
-
         for layer in self.stage1:
             layer.add_spectral_norms()
 
@@ -489,55 +571,68 @@ class Detector(Module):
         for layer in self.stage4:
             layer.add_spectral_norms()
 
+    def enable_activation_checkpointing(self) -> None:
+        """
+        Instead of memorizing the activations of the forward pass, recompute them
+        at every encoder block.
+        """
+
+        self.checkpoint = partial(torch_checkpoint, use_reentrant=False)
+
+    def forward(self, x: Tensor) -> tuple[Tensor, ...]:
+        z1 = self.checkpoint(self.stage1.forward, x)
+        z2 = self.checkpoint(self.stage2.forward, z1)
+        z3 = self.checkpoint(self.stage3.forward, z2)
+        z4 = self.checkpoint(self.stage4.forward, z3)
+
+        return z1, z2, z3, z4
+
+
+class PixelCrush(Module):
+    """Downsample the feature maps using strided convolution."""
+
+    def __init__(self, in_channels: int, out_channels: int, crush_factor: int):
+        super().__init__()
+
+        assert crush_factor in {
+            1,
+            2,
+            3,
+            4,
+        }, "Crush factor must be either 1, 2, 3, or 4."
+
+        self.conv = Conv2d(
+            in_channels, out_channels, kernel_size=crush_factor, stride=crush_factor
+        )
+
+    def add_spectral_norms(self) -> None:
+        self.conv = spectral_norm(self.conv)
+
     def forward(self, x: Tensor) -> Tensor:
-        z = self.stem.forward(x)
-
-        z = self.stage1.forward(z)
-        z = self.stage2.forward(z)
-        z = self.stage3.forward(z)
-        z = self.stage4.forward(z)
-
-        return z
+        return self.conv(x)
 
 
 class DetectorBlock(Module):
     """A detector block with depth-wise separable convolution and residual connection."""
 
-    def __init__(self, in_channels: int, out_channels: int, stride: int = 1):
+    def __init__(self, num_channels: int):
         super().__init__()
 
-        assert in_channels > 0, "Number of channels must be greater than 0."
-        assert out_channels > 0, "Number of output channels must be greater than 0."
+        assert num_channels > 0, "Number of channels must be greater than 0."
 
-        if in_channels == out_channels:
-            skip = Sequential(Identity())
-        else:
-            skip = Sequential(
-                Conv2d(
-                    in_channels=in_channels,
-                    out_channels=out_channels,
-                    kernel_size=1,
-                    stride=stride,
-                    bias=False,
-                )
-            )
-
-        self.skip = skip
-
-        hidden_channels = 4 * out_channels
+        hidden_channels = 4 * num_channels
 
         self.conv1 = Conv2d(
-            in_channels,
-            out_channels,
+            num_channels,
+            num_channels,
             kernel_size=7,
             padding=3,
-            stride=stride,
-            groups=in_channels,
+            groups=num_channels,
             bias=False,
         )
 
-        self.conv2 = Conv2d(out_channels, hidden_channels, kernel_size=1)
-        self.conv3 = Conv2d(hidden_channels, out_channels, kernel_size=1)
+        self.conv2 = Conv2d(num_channels, hidden_channels, kernel_size=1)
+        self.conv3 = Conv2d(hidden_channels, num_channels, kernel_size=1)
 
         self.silu = SiLU()
 
@@ -547,14 +642,12 @@ class DetectorBlock(Module):
         self.conv3 = spectral_norm(self.conv3)
 
     def forward(self, x: Tensor) -> Tensor:
-        s = self.skip.forward(x)
-
         z = self.conv1.forward(x)
         z = self.conv2.forward(z)
         z = self.silu.forward(z)
         z = self.conv3.forward(z)
 
-        z = s + z  # Local residual connection
+        z = x + z  # Local residual connection
 
         return z
 
@@ -578,5 +671,37 @@ class BinaryClassifier(Module):
         z = self.linear1(x)
         z = self.silu(z)
         z = self.linear2(z)
+
+        return z
+
+
+class ChannelLoRA(Module):
+    """Low rank channel decomposition transformation."""
+
+    def __init__(self, layer: Conv2d, rank: int, alpha: float):
+        super().__init__()
+
+        assert rank > 0, "Rank must be greater than 0."
+        assert alpha > 0.0, "Alpha must be greater than 0."
+
+        out_channels, in_channels, h, w = layer.weight.shape
+
+        lora_a = torch.randn(h, w, out_channels, rank) / sqrt(rank)
+        lora_b = torch.zeros(h, w, rank, in_channels)
+
+        self.lora_a = Parameter(lora_a)
+        self.lora_b = Parameter(lora_b)
+
+        self.alpha = alpha
+
+    def forward(self, weight: Tensor) -> Tensor:
+        z = self.lora_a @ self.lora_b
+
+        z *= self.alpha
+
+        # Move channels to front to match weight shape
+        z = z.permute(2, 3, 0, 1)
+
+        z = weight + z
 
         return z

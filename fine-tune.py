@@ -54,15 +54,18 @@ def main():
     parser.add_argument("--hue_jitter", default=0.1, type=float)
     parser.add_argument("--batch_size", default=32, type=int)
     parser.add_argument("--gradient_accumulation_steps", default=4, type=int)
-    parser.add_argument("--num_epochs", default=100, type=int)
-    parser.add_argument("--critic_warmup_epochs", default=10, type=int)
     parser.add_argument("--upscaler_learning_rate", default=1e-4, type=float)
     parser.add_argument("--upscaler_max_gradient_norm", default=1.0, type=float)
-    parser.add_argument("--critic_learning_rate", default=5e-4, type=float)
-    parser.add_argument("--critic_max_gradient_norm", default=10.0, type=float)
+    parser.add_argument("--critic_learning_rate", default=2e-4, type=float)
+    parser.add_argument("--critic_max_gradient_norm", default=2.0, type=float)
+    parser.add_argument("--num_epochs", default=100, type=int)
+    parser.add_argument("--lora_rank", default=3, type=int)
+    parser.add_argument("--lora_alpha", default=2.0, type=float)
+    parser.add_argument("--critic_warmup_epochs", default=3, type=int)
     parser.add_argument(
         "--critic_model_size", default="small", choices=Bouncer.AVAILABLE_MODEL_SIZES
     )
+    parser.add_argument("--activation_checkpointing", action="store_true")
     parser.add_argument("--eval_interval", default=2, type=int)
     parser.add_argument("--checkpoint_interval", default=2, type=int)
     parser.add_argument(
@@ -171,6 +174,17 @@ def main():
 
     upscaler.load_state_dict(checkpoint["model"])
 
+    upscaler.remove_parameterizations()
+
+    upscaler.freeze_parameters()
+
+    lora_args = {
+        "rank": args.lora_rank,
+        "alpha": args.lora_alpha,
+    }
+
+    upscaler.add_lora_adapters(**lora_args)
+
     upscaler = upscaler.to(args.device)
 
     print("Base model loaded successfully")
@@ -179,7 +193,7 @@ def main():
         "model_size": args.critic_model_size,
     }
 
-    critic = Bouncer(**critic_args)
+    critic = Bouncer.from_preconfigured(**critic_args)
 
     critic.add_spectral_norms()
 
@@ -188,6 +202,8 @@ def main():
     critic = critic.to(args.device)
 
     l2_loss_function = MSELoss()
+    stage_1_loss_function = MSELoss()
+    stage_3_loss_function = MSELoss()
     bce_loss_function = RelativisticBCELoss()
 
     upscaler_optimizer = AdamW(upscaler.parameters(), lr=args.upscaler_learning_rate)
@@ -210,10 +226,14 @@ def main():
 
         print("Previous checkpoint resumed successfully")
 
+    if args.activation_checkpointing:
+        upscaler.encoder.enable_activation_checkpointing()
+        critic.detector.enable_activation_checkpointing()
+
     print(f"Upscaler has {upscaler.num_trainable_params:,} trainable parameters")
     print(f"Critic has {critic.num_trainable_params:,} trainable parameters")
 
-    psnr_metric = PeakSignalNoiseRatio().to(args.device)
+    psnr_metric = PeakSignalNoiseRatio(data_range=1.0).to(args.device)
     ssim_metric = StructuralSimilarityIndexMeasure().to(args.device)
     vif_metric = VisualInformationFidelity().to(args.device)
 
@@ -227,8 +247,11 @@ def main():
 
     for epoch in range(starting_epoch, args.num_epochs + 1):
         total_l2_loss, total_u_bce_loss, total_c_bce_loss = 0.0, 0.0, 0.0
+        total_u_stage_1_loss, total_u_stage_3_loss = 0.0, 0.0
         total_u_gradient_norm, total_c_gradient_norm = 0.0, 0.0
         total_batches, total_steps = 0, 0
+
+        is_warmup = epoch <= args.critic_warmup_epochs
 
         for step, (x, y) in enumerate(
             tqdm(train_loader, desc=f"Epoch {epoch}", leave=False), start=1
@@ -242,21 +265,68 @@ def main():
             with amp_context:
                 u_pred, _ = upscaler.forward(x)
 
-                c_pred_real = critic.forward(y)
-                c_pred_fake = critic.forward(u_pred.detach())
+                z1_real, _, z3_real, _, c_pred_real = critic.forward(y)
+                z1_fake, _, z3_fake, _, c_pred_fake = critic.forward(u_pred.detach())
+
+                c_stage_1_reward = stage_1_loss_function(z1_fake, z1_real).neg()
+                c_stage_3_reward = stage_3_loss_function(z3_fake, z3_real).neg()
 
                 c_bce_loss = bce_loss_function(c_pred_real, c_pred_fake, y_real, y_fake)
 
-                scaled_c_loss = c_bce_loss / args.gradient_accumulation_steps
+                combined_c_loss = (
+                    c_stage_1_reward / c_stage_1_reward.detach()
+                    + c_stage_3_reward / c_stage_3_reward.detach()
+                    + c_bce_loss / c_bce_loss.detach()
+                )
+
+                scaled_c_loss = combined_c_loss / args.gradient_accumulation_steps
 
             scaled_c_loss.backward()
 
-            update_this_step = step % args.gradient_accumulation_steps == 0
+            if not is_warmup:
+                with amp_context:
+                    l2_loss = l2_loss_function(u_pred, y)
 
-            is_warmup = epoch <= args.critic_warmup_epochs
+                    z1_real, _, z3_real, _, c_pred_real = critic.forward(y)
+                    z1_fake, _, z3_fake, _, c_pred_fake = critic.forward(u_pred)
 
-            if update_this_step:
-                norm = clip_grad_norm_(
+                    u_stage_1_loss = stage_1_loss_function(z1_fake, z1_real)
+                    u_stage_3_loss = stage_3_loss_function(z3_fake, z3_real)
+
+                    u_bce_loss = bce_loss_function(
+                        c_pred_real, c_pred_fake, y_fake, y_real
+                    )
+
+                    combined_u_loss = (
+                        l2_loss / l2_loss.detach()
+                        + u_stage_1_loss / u_stage_1_loss.detach()
+                        + u_stage_3_loss / u_stage_3_loss.detach()
+                        + u_bce_loss / u_bce_loss.detach()
+                    )
+
+                    scaled_u_loss = combined_u_loss / args.gradient_accumulation_steps
+
+                scaled_u_loss.backward()
+
+                total_l2_loss += l2_loss.item()
+                total_u_stage_1_loss += u_stage_1_loss.item()
+                total_u_stage_3_loss += u_stage_3_loss.item()
+                total_u_bce_loss += u_bce_loss.item()
+                total_c_bce_loss += c_bce_loss.item()
+
+            if step % args.gradient_accumulation_steps == 0:
+                if not is_warmup:
+                    u_norm = clip_grad_norm_(
+                        upscaler.parameters(), args.upscaler_max_gradient_norm
+                    )
+
+                    upscaler_optimizer.step()
+
+                    upscaler_optimizer.zero_grad()
+
+                    total_u_gradient_norm += u_norm.item()
+
+                c_norm = clip_grad_norm_(
                     critic.parameters(), args.critic_max_gradient_norm
                 )
 
@@ -264,49 +334,15 @@ def main():
 
                 critic_optimizer.zero_grad()
 
-                total_c_gradient_norm += norm.item()
+                total_c_gradient_norm += c_norm.item()
+
                 total_steps += 1
-
-            total_c_bce_loss += c_bce_loss.item()
-
-            if not is_warmup:
-                with amp_context:
-                    l2_loss = l2_loss_function(u_pred, y)
-
-                    c_pred_real = critic.forward(y)
-                    c_pred_fake = critic.forward(u_pred)
-
-                    u_bce_loss = bce_loss_function(
-                        c_pred_real, c_pred_fake, y_fake, y_real
-                    )
-
-                    u_loss = (
-                        l2_loss / l2_loss.detach() + u_bce_loss / u_bce_loss.detach()
-                    )
-
-                    scaled_u_loss = u_loss / args.gradient_accumulation_steps
-
-                scaled_u_loss.backward()
-
-                if update_this_step:
-                    norm = clip_grad_norm_(
-                        upscaler.parameters(), args.upscaler_max_gradient_norm
-                    )
-
-                    upscaler_optimizer.step()
-
-                    total_u_gradient_norm += norm.item()
-
-                total_l2_loss += l2_loss.item()
-                total_u_bce_loss += u_bce_loss.item()
-
-            if update_this_step:
-                upscaler_optimizer.zero_grad(set_to_none=True)
-                critic_optimizer.zero_grad(set_to_none=True)
 
             total_batches += 1
 
         average_l2_loss = total_l2_loss / total_batches
+        average_u_stage_1_loss = total_u_stage_1_loss / total_batches
+        average_u_stage_3_loss = total_u_stage_3_loss / total_batches
         average_u_bce_loss = total_u_bce_loss / total_batches
         average_c_bce_loss = total_c_bce_loss / total_batches
 
@@ -314,22 +350,27 @@ def main():
         average_c_gradient_norm = total_c_gradient_norm / total_steps
 
         logger.add_scalar("Pixel L2", average_l2_loss, epoch)
+        logger.add_scalar("Stage 1 L2", average_u_stage_1_loss, epoch)
+        logger.add_scalar("Stage 3 L2", average_u_stage_3_loss, epoch)
         logger.add_scalar("Upscaler BCE", average_u_bce_loss, epoch)
-        logger.add_scalar("Critic BCE", average_c_bce_loss, epoch)
         logger.add_scalar("Upscaler Norm", average_u_gradient_norm, epoch)
+        logger.add_scalar("Critic BCE", average_c_bce_loss, epoch)
         logger.add_scalar("Critic Norm", average_c_gradient_norm, epoch)
 
         print(
             f"Epoch {epoch}:",
             f"Pixel L2: {average_l2_loss:.5},",
+            f"Stage 1 L2: {average_u_stage_1_loss:.5},",
+            f"Stage 3 L2: {average_u_stage_3_loss:.5},",
             f"Upscaler BCE: {average_u_bce_loss:.5},",
-            f"Critic BCE: {average_c_bce_loss:.5},",
             f"Upscaler Norm: {average_u_gradient_norm:.4},",
+            f"Critic BCE: {average_c_bce_loss:.5},",
             f"Critic Norm: {average_c_gradient_norm:.4}",
         )
 
         if epoch % args.eval_interval == 0:
             upscaler.eval()
+            critic.eval()
 
             for x, y in tqdm(test_loader, desc="Testing", leave=False):
                 x = x.to(args.device, non_blocking=True)
@@ -338,24 +379,23 @@ def main():
                 y_real = torch.full((y.size(0), 1), 1.0).to(args.device)
                 y_fake = torch.full((y.size(0), 1), 0.0).to(args.device)
 
-                with torch.no_grad():
-                    u_pred = upscaler.upscale(x)
+                u_pred = upscaler.upscale(x)
 
-                    c_pred_real = critic.forward(y)
-                    c_pred_fake = critic.forward(u_pred)
+                c_pred_real = critic.predict(y)
+                c_pred_fake = critic.predict(u_pred)
 
-                    c_pred_real -= c_pred_fake.mean()
-                    c_pred_fake -= c_pred_real.mean()
+                c_pred_real -= c_pred_fake.mean()
+                c_pred_fake -= c_pred_real.mean()
 
-                    c_pred = torch.cat((c_pred_real, c_pred_fake), dim=0)
-                    labels = torch.cat((y_real, y_fake), dim=0)
+                c_pred = torch.cat((c_pred_real, c_pred_fake), dim=0)
+                labels = torch.cat((y_real, y_fake), dim=0)
 
-                    psnr_metric.update(u_pred, y)
-                    ssim_metric.update(u_pred, y)
-                    vif_metric.update(u_pred, y)
+                psnr_metric.update(u_pred, y)
+                ssim_metric.update(u_pred, y)
+                vif_metric.update(u_pred, y)
 
-                    precision_metric.update(c_pred, labels)
-                    recall_metric.update(c_pred, labels)
+                precision_metric.update(c_pred, labels)
+                recall_metric.update(c_pred, labels)
 
             psnr = psnr_metric.compute()
             ssim = ssim_metric.compute()
@@ -369,15 +409,17 @@ def main():
             logger.add_scalar("PSNR", psnr, epoch)
             logger.add_scalar("SSIM", ssim, epoch)
             logger.add_scalar("VIF", vif, epoch)
-
             logger.add_scalar("F1 Score", f1_score, epoch)
             logger.add_scalar("Precision", precision, epoch)
             logger.add_scalar("Recall", recall, epoch)
 
-            print(f"PSNR: {psnr:.5}, SSIM: {ssim:.5}, VIF: {vif:.5}")
-
             print(
-                f"F1 Score: {f1_score:.5}, Precision: {precision:.5}, Recall: {recall:.5}"
+                f"PSNR: {psnr:.5},",
+                f"SSIM: {ssim:.5},",
+                f"VIF: {vif:.5},",
+                f"F1 Score: {f1_score:.5},",
+                f"Precision: {precision:.5},",
+                f"Recall: {recall:.5}",
             )
 
             psnr_metric.reset()
@@ -388,11 +430,13 @@ def main():
             recall_metric.reset()
 
             upscaler.train()
+            critic.train()
 
         if epoch % args.checkpoint_interval == 0:
             checkpoint = {
                 "epoch": epoch,
                 "model_args": upscaler_args,
+                "lora_args": lora_args,
                 "model": upscaler.state_dict(),
                 "model_optimizer": upscaler_optimizer.state_dict(),
                 "critic_args": critic_args,

@@ -33,6 +33,9 @@ def main():
 
     model.add_weight_norms()
 
+    if "lora_args" in checkpoint:
+        model.add_lora_adapters(**checkpoint["lora_args"])
+
     model = torch.compile(model)
 
     model.load_state_dict(checkpoint["model"])

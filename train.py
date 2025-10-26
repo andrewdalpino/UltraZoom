@@ -102,15 +102,15 @@ def main():
     if "mps" in args.device and not mps_is_available():
         raise RuntimeError("MPS is not available.")
 
-    torch.set_float32_matmul_precision("high")
+    if "cuda" in args.device and is_bf16_supported():
+        torch.backends.cudnn.conv.fp32_precision = "tf32"
+        torch.backends.cuda.matmul.fp32_precision = "tf32"
 
-    dtype = (
-        torch.bfloat16
-        if "cuda" in args.device and is_bf16_supported()
-        else torch.float32
-    )
+        autocast_dtype = torch.bfloat16
+    else:
+        autocast_dtype = torch.float32
 
-    amp_context = autocast(device_type=args.device, dtype=dtype)
+    amp_context = autocast(device_type=args.device, dtype=autocast_dtype)
 
     if args.seed:
         torch.manual_seed(args.seed)
@@ -168,9 +168,6 @@ def main():
 
     model.add_weight_norms()
 
-    if args.activation_checkpointing:
-        model.encoder.enable_activation_checkpointing()
-
     model = model.to(args.device)
 
     l2_loss_function = MSELoss()
@@ -186,7 +183,7 @@ def main():
 
     optimizer = AdamW(model.parameters(), lr=args.learning_rate)
 
-    psnr_metric = PeakSignalNoiseRatio().to(args.device)
+    psnr_metric = PeakSignalNoiseRatio(data_range=1.0).to(args.device)
     ssim_metric = StructuralSimilarityIndexMeasure().to(args.device)
     vif_metric = VisualInformationFidelity().to(args.device)
 
@@ -203,6 +200,9 @@ def main():
         starting_epoch += checkpoint["epoch"]
 
         print("Previous checkpoint resumed successfully")
+
+    if args.activation_checkpointing:
+        model.encoder.enable_activation_checkpointing()
 
     print("Training ...")
     model.train()
@@ -239,7 +239,7 @@ def main():
 
                 optimizer.step()
 
-                optimizer.zero_grad(set_to_none=True)
+                optimizer.zero_grad()
 
                 total_gradient_norm += norm.item()
 
@@ -276,7 +276,7 @@ def main():
                 x = x.to(args.device, non_blocking=True)
                 y = y.to(args.device, non_blocking=True)
 
-                y_pred, _ = model.forward(x)
+                y_pred = model.upscale(x)
 
                 psnr_metric.update(y_pred, y)
                 ssim_metric.update(y_pred, y)

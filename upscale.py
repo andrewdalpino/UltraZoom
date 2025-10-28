@@ -20,7 +20,7 @@ def main():
     parser.add_argument(
         "--checkpoint_path", default="./checkpoints/checkpoint.pt", type=str
     )
-    parser.add_argument("--device", default="cuda", type=str)
+    parser.add_argument("--device", default="cpu", type=str)
 
     args = parser.parse_args()
 
@@ -33,12 +33,13 @@ def main():
 
     model.add_weight_norms()
 
-    if "lora_args" in checkpoint:
-        model.add_lora_adapters(**checkpoint["lora_args"])
+    state_dict = checkpoint["model"]
 
-    model = torch.compile(model)
+    # Compensate for compiled state dict.
+    for key in list(state_dict.keys()):
+        state_dict[key.replace("_orig_mod.", "")] = state_dict.pop(key)
 
-    model.load_state_dict(checkpoint["model"])
+    model.load_state_dict(state_dict)
 
     model.remove_parameterizations()
 

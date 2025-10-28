@@ -17,8 +17,9 @@ from torch.utils.tensorboard import SummaryWriter
 
 from torchvision.transforms.v2 import (
     Compose,
-    RandomCrop,
     CenterCrop,
+    RandomCrop,
+    RandomHorizontalFlip,
     ColorJitter,
 )
 
@@ -46,22 +47,22 @@ def main():
     parser.add_argument("--num_dataset_processes", default=8, type=int)
     parser.add_argument("--target_resolution", default=256, type=int)
     parser.add_argument("--blur_amount", default=0.5, type=float)
-    parser.add_argument("--compression_amount", default=0.2, type=float)
-    parser.add_argument("--noise_amount", default=0.02, type=float)
+    parser.add_argument("--min_noise", default=0.00, type=float)
+    parser.add_argument("--max_noise", default=0.04, type=float)
+    parser.add_argument("--min_compression", default=0.0, type=float)
+    parser.add_argument("--max_compression", default=0.3, type=float)
     parser.add_argument("--brightness_jitter", default=0.1, type=float)
     parser.add_argument("--contrast_jitter", default=0.1, type=float)
     parser.add_argument("--saturation_jitter", default=0.1, type=float)
     parser.add_argument("--hue_jitter", default=0.1, type=float)
-    parser.add_argument("--batch_size", default=32, type=int)
-    parser.add_argument("--gradient_accumulation_steps", default=4, type=int)
+    parser.add_argument("--batch_size", default=16, type=int)
+    parser.add_argument("--gradient_accumulation_steps", default=8, type=int)
     parser.add_argument("--upscaler_learning_rate", default=1e-4, type=float)
     parser.add_argument("--upscaler_max_gradient_norm", default=1.0, type=float)
     parser.add_argument("--critic_learning_rate", default=2e-4, type=float)
     parser.add_argument("--critic_max_gradient_norm", default=2.0, type=float)
-    parser.add_argument("--num_epochs", default=100, type=int)
-    parser.add_argument("--lora_rank", default=3, type=int)
-    parser.add_argument("--lora_alpha", default=2.0, type=float)
-    parser.add_argument("--critic_warmup_epochs", default=3, type=int)
+    parser.add_argument("--num_epochs", default=50, type=int)
+    parser.add_argument("--critic_warmup_epochs", default=4, type=int)
     parser.add_argument(
         "--critic_model_size", default="small", choices=Bouncer.AVAILABLE_MODEL_SIZES
     )
@@ -132,8 +133,10 @@ def main():
         target_resolution=args.target_resolution,
         upscale_ratio=upscaler_args["upscale_ratio"],
         blur_amount=args.blur_amount,
-        compression_amount=args.compression_amount,
-        noise_amount=args.noise_amount,
+        min_noise=args.min_noise,
+        max_noise=args.max_noise,
+        min_compression=args.min_compression,
+        max_compression=args.max_compression,
     )
 
     training = new_dataset(
@@ -141,6 +144,7 @@ def main():
         pre_transformer=Compose(
             [
                 RandomCrop(args.target_resolution),
+                RandomHorizontalFlip(),
                 ColorJitter(
                     brightness=args.brightness_jitter,
                     contrast=args.contrast_jitter,
@@ -170,20 +174,13 @@ def main():
 
     upscaler.add_weight_norms()
 
-    upscaler = torch.compile(upscaler)
+    state_dict = checkpoint["model"]
 
-    upscaler.load_state_dict(checkpoint["model"])
+    # Compensate for compiled state dict.
+    for key in list(state_dict.keys()):
+        state_dict[key.replace("_orig_mod.", "")] = state_dict.pop(key)
 
-    upscaler.remove_parameterizations()
-
-    upscaler.freeze_parameters()
-
-    lora_args = {
-        "rank": args.lora_rank,
-        "alpha": args.lora_alpha,
-    }
-
-    upscaler.add_lora_adapters(**lora_args)
+    upscaler.load_state_dict(state_dict)
 
     upscaler = upscaler.to(args.device)
 
@@ -196,8 +193,6 @@ def main():
     critic = Bouncer.from_preconfigured(**critic_args)
 
     critic.add_spectral_norms()
-
-    critic = torch.compile(critic)
 
     critic = critic.to(args.device)
 
@@ -281,7 +276,9 @@ def main():
 
                 scaled_c_loss = combined_c_loss / args.gradient_accumulation_steps
 
-            scaled_c_loss.backward()
+            scaled_c_loss.backward(retain_graph=not is_warmup)
+
+            total_c_bce_loss += c_bce_loss.item()
 
             if not is_warmup:
                 with amp_context:
@@ -312,7 +309,6 @@ def main():
                 total_u_stage_1_loss += u_stage_1_loss.item()
                 total_u_stage_3_loss += u_stage_3_loss.item()
                 total_u_bce_loss += u_bce_loss.item()
-                total_c_bce_loss += c_bce_loss.item()
 
             if step % args.gradient_accumulation_steps == 0:
                 if not is_warmup:
@@ -404,7 +400,10 @@ def main():
             precision = precision_metric.compute()
             recall = recall_metric.compute()
 
-            f1_score = (2 * precision * recall) / (precision + recall)
+            if precision + recall != 0:
+                f1_score = (2 * precision * recall) / (precision + recall)
+            else:
+                f1_score = 0.0
 
             logger.add_scalar("PSNR", psnr, epoch)
             logger.add_scalar("SSIM", ssim, epoch)
@@ -436,7 +435,6 @@ def main():
             checkpoint = {
                 "epoch": epoch,
                 "model_args": upscaler_args,
-                "lora_args": lora_args,
                 "model": upscaler.state_dict(),
                 "model_optimizer": upscaler_optimizer.state_dict(),
                 "critic_args": critic_args,

@@ -370,11 +370,11 @@ class ONNXModel(Module):
 class Bouncer(Module):
     """A critic network for detecting real and fake images for adversarial training."""
 
-    AVAILABLE_MODEL_SIZES = {"small", "medium", "large", "x-large"}
+    AVAILABLE_MODEL_SIZES = {"small", "medium", "large"}
 
     @classmethod
     def from_preconfigured(cls, model_size: str) -> Self:
-        """Return a new preconfigured bouncer model."""
+        """Return a new preconfigured model."""
 
         assert model_size in cls.AVAILABLE_MODEL_SIZES, "Invalid model size."
 
@@ -383,14 +383,6 @@ class Bouncer(Module):
 
         match model_size:
             case "small":
-                num_primary_channels = 64
-                num_secondary_channels = 128
-                num_secondary_layers = 3
-                num_tertiary_channels = 256
-                num_tertiary_layers = 6
-                num_quaternary_channels = 512
-
-            case "medium":
                 num_primary_channels = 96
                 num_secondary_channels = 192
                 num_secondary_layers = 3
@@ -398,7 +390,7 @@ class Bouncer(Module):
                 num_tertiary_layers = 12
                 num_quaternary_channels = 768
 
-            case "large":
+            case "medium":
                 num_primary_channels = 128
                 num_secondary_channels = 256
                 num_secondary_layers = 6
@@ -406,7 +398,7 @@ class Bouncer(Module):
                 num_tertiary_layers = 24
                 num_quaternary_channels = 1024
 
-            case "x-large":
+            case "large":
                 num_primary_channels = 192
                 num_secondary_channels = 384
                 num_secondary_layers = 6

@@ -44,8 +44,7 @@ class ImageFolder(Dataset):
         upscale_ratio: int,
         pre_transformer: Transform | None,
         blur_amount: float,
-        min_noise: float,
-        max_noise: float,
+        noise_amount: float,
         min_compression: float,
         max_compression: float,
     ):
@@ -62,13 +61,10 @@ class ImageFolder(Dataset):
         if blur_amount < 0.0:
             raise ValueError(f"Blur amount must be non-negative, {blur_amount} given.")
 
-        if min_noise < 0.0:
+        if noise_amount < 0.0:
             raise ValueError(
-                f"Min noise amount must be non-negative, {min_noise} given."
+                f"Noise amount must be non-negative, {noise_amount} given."
             )
-
-        if max_noise < min_noise:
-            raise ValueError(f"Max noise amount must be greater than min noise.")
 
         if min_compression < 0.0 or min_compression > 1.0:
             raise ValueError(
@@ -85,8 +81,6 @@ class ImageFolder(Dataset):
 
         min_degraded_quality = 100 - int(max_compression * 100)
         max_degraded_quality = 100 - int(min_compression * 100)
-
-        noise_amounts = linspace(min_noise, max_noise, steps=5).tolist()
 
         degrade_transformer = Compose(
             [
@@ -105,12 +99,7 @@ class ImageFolder(Dataset):
                 ),
                 JPEG(quality=(min_degraded_quality, max_degraded_quality)),
                 ToDtype(torch.float32, scale=True),
-                RandomChoice(
-                    [
-                        GaussianNoise(sigma=noise_amount)
-                        for noise_amount in noise_amounts
-                    ]
-                ),
+                GaussianNoise(sigma=noise_amount),
             ]
         )
 

@@ -49,9 +49,8 @@ def main():
     )
     parser.add_argument("--target_resolution", default=256, type=int)
     parser.add_argument("--blur_amount", default=0.5, type=float)
-    parser.add_argument("--min_noise", default=0.00, type=float)
-    parser.add_argument("--max_noise", default=0.04, type=float)
-    parser.add_argument("--min_compression", default=0.0, type=float)
+    parser.add_argument("--noise_amount", default=0.02, type=float)
+    parser.add_argument("--min_compression", default=0.1, type=float)
     parser.add_argument("--max_compression", default=0.3, type=float)
     parser.add_argument("--brightness_jitter", default=0.1, type=float)
     parser.add_argument("--contrast_jitter", default=0.1, type=float)
@@ -126,8 +125,7 @@ def main():
         target_resolution=args.target_resolution,
         upscale_ratio=args.upscale_ratio,
         blur_amount=args.blur_amount,
-        min_noise=args.min_noise,
-        max_noise=args.max_noise,
+        noise_amount=args.noise_amount,
         min_compression=args.min_compression,
         max_compression=args.max_compression,
     )

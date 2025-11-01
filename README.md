@@ -1,14 +1,14 @@
 # Ultra Zoom
 
-A fast single image super-resolution (SISR) model for upscaling images with ultra high-quality. Ultra Zoom uses a two-stage "zoom in and enhance" mechanism that uses a fast deterministic upscaling algorithm to zoom in and then enhances the image through a residual pathway that operates primarily in the low-resolution subspace of a deep neural network. As such, Ultra Zoom requires less resources than upscalers that predict every new pixel de novo - making it outstanding for real-time image processing.
+A fast single image super-resolution (SISR) model for upscaling images with ultra high-quality. Ultra Zoom uses a two-stage "zoom in and enhance" mechanism that uses a fast deterministic upscaling algorithm to upscale the image and then enhances through a residual pathway that operates primarily in the low-resolution subspace of a deep neural network.
 
 ## Key Features
 
-- **Fast and scalable**: Instead of predicting de novo pixels, Ultra Zoom uses a unique "zoom in and enhance" approach that combines the speed of deterministic bicubic interpolation with the power of a deep neural network.
+- **Fast and scalable**: Instead of predicting de novo pixels, Ultra Zoom uses a unique "zoom in and enhance" mechanism that combines the speed of deterministic bicubic interpolation with the power of a deep neural network.
 
 - **Full RGB**: Unlike many efficient SR models that only operate in the luminance domain, Ultra Zoom operates within the full RGB color domain enhancing both luminance and chrominance for the best possible quality.
 
-- **Denoising and Deblurring**: During the enhancement stage, the model removes multiple types of noise and blur making images look crisp and clean.
+- **Denoising and Deblurring**: Removes multiple types of noise and blur making images look crisp and clean.
 
 ## Demo
 
@@ -132,8 +132,9 @@ Then navigate to the dashboard using your favorite web browser.
 | --target_resolution | 256 | int | The number of pixels in the height and width dimensions of the training images. |
 | --upscale_ratio | 2 | (1, 2, 3, 4) | The upscaling or zoom factor. |
 | --blur_amount | 0.5 | float | The amount of Gaussian blur to apply to the degraded low-resolution image. |
-| --compression_amount | 0.2 | float | The amount of JPEG compression to apply to the degraded low-resolution image. |
 | --noise_amount | 0.02 | float | The amount of Gaussian noise to add to the degraded low-resolution image. |
+| --min_compression | 0.1 | float | The minimum amount of JPEG compression to apply to the degraded low-resolution image. |
+| --max_compression | 0.3 | float | The maximum amount of JPEG compression to apply to the degraded low-resolution image. |
 | --brightness_jitter | 0.1 | float | The amount of jitter applied to the brightness of the training images. |
 | --contrast_jitter | 0.1 | float | The amount of jitter applied to the contrast of the training images. |
 | --saturation_jitter | 0.1 | float | The amount of jitter applied to the saturation of the training images. |
@@ -152,7 +153,7 @@ Then navigate to the dashboard using your favorite web browser.
 | --checkpoint_path | "./checkpoints/checkpoint.pt" | str | The path to the base checkpoint file on disk. |
 | --resume | False | bool | Should we resume training from the last checkpoint? |
 | --run_dir_path | "./runs" | str | The path to the TensorBoard run directory for this training session. |
-| --device | "cuda" | str | The device to run the computation on. |
+| --device | "cpu" | str | The device to run the computation on. |
 | --seed | None | int | The seed for the random number generator. |
 
 ## Fine-tuning
@@ -179,8 +180,9 @@ python fine-tune.py --base_checkpoint_path=./checkpoints/2X-100.pt --critic_mode
 | --num_dataset_processes | 8 | int | The number of CPU processes to use to preprocess the dataset. |
 | --target_resolution | 256 | int | The number of pixels in the height and width dimensions of the training images. |
 | --blur_amount | 0.5 | float | The amount of Gaussian blur to apply to the degraded low-resolution image. |
-| --compression_amount | 0.2 | float | The amount of JPEG compression to apply to the degraded low-resolution image. |
 | --noise_amount | 0.02 | float | The amount of Gaussian noise to add to the degraded low-resolution image. |
+| --min_compression | 0.1 | float | The minimum amount of JPEG compression to apply to the degraded low-resolution image. |
+| --max_compression | 0.3 | float | The maximum amount of JPEG compression to apply to the degraded low-resolution image. |
 | --brightness_jitter | 0.1 | float | The amount of jitter applied to the brightness of the training images. |
 | --contrast_jitter | 0.1 | float | The amount of jitter applied to the contrast of the training images. |
 | --saturation_jitter | 0.1 | float | The amount of jitter applied to the saturation of the training images. |
@@ -195,12 +197,12 @@ python fine-tune.py --base_checkpoint_path=./checkpoints/2X-100.pt --critic_mode
 | --critic_warmup_epochs | 4 | int | Train the critic model for this many epochs before using it to train the upscaler. |
 | --critic_model_size | "small" | str | The size of the critic model. Choice of small, medium, and large. |
 | --activation_checkpointing | False | bool | Should we use activation checkpointing? This will drastically reduce memory utilization during training at the cost of recomputing the forward pass. |
-| --eval_interval | 2 | int | Evaluate the model after this many epochs on the testing set. |
+| --eval_interval | 1 | int | Evaluate the model after this many epochs on the testing set. |
 | --checkpoint_interval | 2 | int | Save the model checkpoint to disk every this many epochs. |
 | --checkpoint_path | "./checkpoints/checkpoint.pt" | str | The path to the base checkpoint file on disk. |
 | --resume | False | bool | Should we resume training from the last checkpoint? |
 | --run_dir_path | "./runs" | str | The path to the TensorBoard run directory for this training session. |
-| --device | "cuda" | str | The device to run the computation on. |
+| --device | "cpu" | str | The device to run the computation on. |
 | --seed | None | int | The seed for the random number generator. |
 
 ## Upscaling
@@ -227,10 +229,12 @@ python upscale.py --checkpoint_path="./checkpoints/fine-tuned.pt" --image_path="
 
 ## References
 
+>- S. Park, et. al. NeXtSRGAN: enhancing super-resolution GAN with ConvNeXt discriminator for superior realism, The Visual Computer, 2025.
+>- J. Song, et. al Gram-GAN: Image Super-Resolution Based on Gram Matrix and Discriminator Perceptual Loss, Sensors, 2023.
 >- Z. Liu, et al. A ConvNet for the 2020s, 2022.
+>- A. Jolicoeur-Martineau. The Relativistic Discriminator: A Key Element Missing From Standard GAN, 2018.
 >- J. Yu, et al. Wide Activation for Efficient and Accurate Image Super-Resolution, 2018.
 >- J. Johnson, et al. Perceptual Losses for Real-time Style Transfer and Super-Resolution, 2016.
 >- W. Shi, et al. Real-Time Single Image and Video Super-Resolution Using an Efficient Sub-Pixel Convolutional Neural Network, 2016.
 >- T. Salimans, et al. Weight Normalization: A Simple Reparameterization to Accelerate Training of Deep Neural Networks, OpenAI, 2016.
 >- T. Miyato, et al. Spectral Normalization for Generative Adversarial Networks, ICLR, 2018.
->- A. Jolicoeur-Martineau. The Relativistic Discriminator: A Key Element Missing From Standard GAN, 2018.

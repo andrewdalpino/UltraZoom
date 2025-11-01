@@ -61,12 +61,12 @@ def main():
     parser.add_argument("--critic_learning_rate", default=2e-4, type=float)
     parser.add_argument("--critic_max_gradient_norm", default=2.0, type=float)
     parser.add_argument("--num_epochs", default=50, type=int)
-    parser.add_argument("--critic_warmup_epochs", default=4, type=int)
+    parser.add_argument("--critic_warmup_epochs", default=2, type=int)
     parser.add_argument(
         "--critic_model_size", default="small", choices=Bouncer.AVAILABLE_MODEL_SIZES
     )
     parser.add_argument("--activation_checkpointing", action="store_true")
-    parser.add_argument("--eval_interval", default=2, type=int)
+    parser.add_argument("--eval_interval", default=1, type=int)
     parser.add_argument("--checkpoint_interval", default=2, type=int)
     parser.add_argument(
         "--checkpoint_path", default="./checkpoints/checkpoint.pt", type=str
@@ -238,7 +238,7 @@ def main():
     critic.train()
 
     for epoch in range(starting_epoch, args.num_epochs + 1):
-        total_pixel_l2, total_stage_1_l2 = 0.0, 0.0
+        total_pixel_l2, total_u_stage_1_l2 = 0.0, 0.0
         total_u_bce, total_c_bce = 0.0, 0.0
         total_u_gradient_norm, total_c_gradient_norm = 0.0, 0.0
         total_batches, total_steps = 0, 0
@@ -262,7 +262,7 @@ def main():
                 _, _, _, _, c_pred_fake = critic.forward(u_pred.detach())
                 _, _, _, _, c_pred_real = critic.forward(y)
 
-                c_bce = bce_loss(c_pred_real, c_pred_fake, y_real, y_fake)
+                c_bce = bce_loss.forward(c_pred_real, c_pred_fake, y_real, y_fake)
 
                 scaled_c_loss = c_bce / args.gradient_accumulation_steps
 
@@ -285,18 +285,18 @@ def main():
 
             if not is_warmup:
                 with amp_context:
-                    pixel_l2 = pixel_l2_loss(u_pred, y)
+                    pixel_l2 = pixel_l2_loss.forward(u_pred, y)
 
                     z1_fake, _, _, _, c_pred_fake = critic.forward(u_pred)
                     z1_real, _, _, _, c_pred_real = critic.forward(y)
 
-                    stage_1_l2 = stage_1_l2_loss(z1_fake, z1_real)
+                    u_stage_1_l2 = stage_1_l2_loss.forward(z1_fake, z1_real)
 
-                    u_bce = bce_loss(c_pred_real, c_pred_fake, y_fake, y_real)
+                    u_bce = bce_loss.forward(c_pred_real, c_pred_fake, y_fake, y_real)
 
                     combined_u_loss = (
                         pixel_l2 / pixel_l2.detach()
-                        + stage_1_l2 / stage_1_l2.detach()
+                        + u_stage_1_l2 / u_stage_1_l2.detach()
                         + u_bce / u_bce.detach()
                     )
 
@@ -316,13 +316,13 @@ def main():
                     total_u_gradient_norm += u_norm.item()
 
                 total_pixel_l2 += pixel_l2.item()
-                total_stage_1_l2 += stage_1_l2.item()
+                total_u_stage_1_l2 += u_stage_1_l2.item()
                 total_u_bce += u_bce.item()
 
             total_batches += 1
 
         average_pixel_l2 = total_pixel_l2 / total_batches
-        average_stage_1_l2 = total_stage_1_l2 / total_batches
+        average_u_stage_1_l2 = total_u_stage_1_l2 / total_batches
         average_u_bce = total_u_bce / total_batches
         average_c_bce = total_c_bce / total_batches
 
@@ -330,7 +330,7 @@ def main():
         average_c_gradient_norm = total_c_gradient_norm / total_steps
 
         logger.add_scalar("Pixel L2", average_pixel_l2, epoch)
-        logger.add_scalar("Stage 1 L2", average_stage_1_l2, epoch)
+        logger.add_scalar("Stage 1 L2", average_u_stage_1_l2, epoch)
         logger.add_scalar("Upscaler BCE", average_u_bce, epoch)
         logger.add_scalar("Upscaler Norm", average_u_gradient_norm, epoch)
         logger.add_scalar("Critic BCE", average_c_bce, epoch)
@@ -339,7 +339,7 @@ def main():
         print(
             f"Epoch {epoch}:",
             f"Pixel L2: {average_pixel_l2:.5},",
-            f"Stage 1 L2: {average_stage_1_l2:.5},",
+            f"Stage 1 L2: {average_u_stage_1_l2:.5},",
             f"Upscaler BCE: {average_u_bce:.5},",
             f"Upscaler Norm: {average_u_gradient_norm:.4},",
             f"Critic BCE: {average_c_bce:.5},",

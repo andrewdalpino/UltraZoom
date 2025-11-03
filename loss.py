@@ -68,16 +68,12 @@ class RelativisticBCELoss(Module):
         y_real: Tensor,
         y_fake: Tensor,
     ) -> Tensor:
-        y_pred = torch.cat(
-            (
-                y_pred_real - y_pred_fake.mean(),
-                y_pred_fake - y_pred_real.mean(),
-            ),
-            dim=0,
-        )
+        y_pred_real_hat = y_pred_real - y_pred_fake.mean()
+        y_pred_fake_hat = y_pred_fake - y_pred_real.mean()
 
-        y = torch.cat((y_real, y_fake), dim=0)
+        y_pred = torch.cat((y_pred_real_hat, y_pred_fake_hat))
+        y = torch.cat((y_real, y_fake))
 
-        loss = self.bce(y_pred, y)
+        loss = self.bce.forward(y_pred, y)
 
         return loss

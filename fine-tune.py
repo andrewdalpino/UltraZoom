@@ -58,15 +58,15 @@ def main():
     parser.add_argument("--gradient_accumulation_steps", default=8, type=int)
     parser.add_argument("--upscaler_learning_rate", default=1e-4, type=float)
     parser.add_argument("--upscaler_max_gradient_norm", default=1.0, type=float)
-    parser.add_argument("--critic_learning_rate", default=2e-4, type=float)
-    parser.add_argument("--critic_max_gradient_norm", default=2.0, type=float)
+    parser.add_argument("--critic_learning_rate", default=5e-4, type=float)
+    parser.add_argument("--critic_max_gradient_norm", default=10.0, type=float)
     parser.add_argument("--num_epochs", default=50, type=int)
-    parser.add_argument("--critic_warmup_epochs", default=2, type=int)
+    parser.add_argument("--critic_warmup_epochs", default=3, type=int)
     parser.add_argument(
         "--critic_model_size", default="small", choices=Bouncer.AVAILABLE_MODEL_SIZES
     )
     parser.add_argument("--activation_checkpointing", action="store_true")
-    parser.add_argument("--eval_interval", default=1, type=int)
+    parser.add_argument("--eval_interval", default=2, type=int)
     parser.add_argument("--checkpoint_interval", default=2, type=int)
     parser.add_argument(
         "--checkpoint_path", default="./checkpoints/checkpoint.pt", type=str
@@ -382,10 +382,7 @@ def main():
             precision = precision_metric.compute()
             recall = recall_metric.compute()
 
-            if precision + recall != 0:
-                f1_score = (2 * precision * recall) / (precision + recall)
-            else:
-                f1_score = 0.0
+            f1_score = 2 * (precision * recall) / (precision + recall + 1e-8)
 
             logger.add_scalar("PSNR", psnr, epoch)
             logger.add_scalar("SSIM", ssim, epoch)

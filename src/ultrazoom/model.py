@@ -383,28 +383,28 @@ class Bouncer(Module):
 
         match model_size:
             case "small":
-                num_primary_channels = 96
-                num_secondary_channels = 192
+                num_primary_channels = 64
+                num_secondary_channels = 128
                 num_secondary_layers = 3
-                num_tertiary_channels = 384
+                num_tertiary_channels = 256
                 num_tertiary_layers = 12
-                num_quaternary_channels = 768
+                num_quaternary_channels = 512
 
             case "medium":
-                num_primary_channels = 128
-                num_secondary_channels = 256
+                num_primary_channels = 96
+                num_secondary_channels = 192
                 num_secondary_layers = 6
-                num_tertiary_channels = 512
+                num_tertiary_channels = 384
                 num_tertiary_layers = 24
-                num_quaternary_channels = 1024
+                num_quaternary_channels = 768
 
             case "large":
-                num_primary_channels = 192
-                num_secondary_channels = 384
-                num_secondary_layers = 6
-                num_tertiary_channels = 768
+                num_primary_channels = 128
+                num_secondary_channels = 256
+                num_secondary_layers = 9
+                num_tertiary_channels = 512
                 num_tertiary_layers = 36
-                num_quaternary_channels = 1536
+                num_quaternary_channels = 1024
 
         return cls(
             num_primary_channels,
@@ -519,27 +519,33 @@ class Detector(Module):
 
         stage1 = Sequential(
             PixelCrush(3, num_primary_channels, 2),
-            *[DetectorBlock(num_primary_channels) for _ in range(num_primary_layers)],
+            *[
+                DetectorBlock(num_primary_channels)
+                for _ in range(num_primary_layers - 1)
+            ],
         )
 
         stage2 = Sequential(
             PixelCrush(num_primary_channels, num_secondary_channels, 2),
             *[
                 DetectorBlock(num_secondary_channels)
-                for _ in range(num_secondary_layers)
+                for _ in range(num_secondary_layers - 1)
             ],
         )
 
         stage3 = Sequential(
             PixelCrush(num_secondary_channels, num_tertiary_channels, 2),
-            *[DetectorBlock(num_tertiary_channels) for _ in range(num_tertiary_layers)],
+            *[
+                DetectorBlock(num_tertiary_channels)
+                for _ in range(num_tertiary_layers - 1)
+            ],
         )
 
         stage4 = Sequential(
             PixelCrush(num_tertiary_channels, num_quaternary_channels, 2),
             *[
                 DetectorBlock(num_quaternary_channels)
-                for _ in range(num_quaternary_layers)
+                for _ in range(num_quaternary_layers - 1)
             ],
         )
 
@@ -645,24 +651,15 @@ class DetectorBlock(Module):
 
 
 class BinaryClassifier(Module):
-    """A simple two-layer binary classification head."""
+    """A simple single-layer binary classification head to preserve positional invariance."""
 
     def __init__(self, input_features: int):
         super().__init__()
 
-        assert input_features > 2, "Number of input features must be greater than 2."
-
-        hidden_features = input_features // 2
-
-        self.linear1 = Linear(input_features, hidden_features)
-        self.linear2 = Linear(hidden_features, 1)
-
-        self.silu = SiLU()
+        self.linear = Linear(input_features, 1)
 
     def forward(self, x: Tensor) -> Tensor:
-        z = self.linear1(x)
-        z = self.silu(z)
-        z = self.linear2(z)
+        z = self.linear.forward(x)
 
         return z
 

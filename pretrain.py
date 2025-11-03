@@ -104,15 +104,15 @@ def main():
     if "mps" in args.device and not mps_is_available():
         raise RuntimeError("MPS is not available.")
 
-    if "cuda" in args.device and is_bf16_supported():
-        torch.backends.cudnn.conv.fp32_precision = "tf32"
-        torch.backends.cuda.matmul.fp32_precision = "tf32"
+    torch.set_float32_matmul_precision("high")
 
-        autocast_dtype = torch.bfloat16
-    else:
-        autocast_dtype = torch.float32
+    dtype = (
+        torch.bfloat16
+        if "cuda" in args.device and is_bf16_supported()
+        else torch.float32
+    )
 
-    amp_context = autocast(device_type=args.device, dtype=autocast_dtype)
+    amp_context = autocast(device_type=args.device, dtype=dtype)
 
     if args.seed:
         torch.manual_seed(args.seed)

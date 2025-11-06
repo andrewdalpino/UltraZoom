@@ -74,7 +74,11 @@ def main():
     plt.show()
 
     if "y" in input("Save upscaled image? (yes|no): ").lower():
-        save_image(y_pred.squeeze(0), f"{time()}.png")
+        filename = f"out_{time()}"
+
+        save_image(y_bicubic.squeeze(0), f"{filename}_bicubic.png")
+        save_image(y_pred.squeeze(0), f"{filename}_enhanced.png")
+
 
 
 if __name__ == "__main__":

@@ -26,6 +26,8 @@ from PIL import Image
 
 from src.ultrazoom.model import UltraZoom
 
+from transforms import GreyNoise
+
 
 class ImageFolder(Dataset):
     """
@@ -99,7 +101,12 @@ class ImageFolder(Dataset):
                 ),
                 JPEG(quality=(min_degraded_quality, max_degraded_quality)),
                 ToDtype(torch.float32, scale=True),
-                GaussianNoise(sigma=noise_amount),
+                RandomChoice(
+                    [
+                        GaussianNoise(sigma=noise_amount),
+                        GreyNoise(sigma=noise_amount),
+                    ]
+                ),
             ]
         )
 

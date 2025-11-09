@@ -40,7 +40,7 @@ def main():
 
     parser.add_argument("--train_images_path", default="./dataset/train", type=str)
     parser.add_argument("--test_images_path", default="./dataset/test", type=str)
-    parser.add_argument("--num_dataset_processes", default=4, type=int)
+    parser.add_argument("--num_dataset_processes", default=8, type=int)
     parser.add_argument(
         "--upscale_ratio",
         default=2,

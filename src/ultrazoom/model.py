@@ -63,7 +63,7 @@ class UltraZoom(Module, PyTorchModelHubMixin):
                 f"Upscale ratio must be either 2, 3, or 4, {upscale_ratio} given."
             )
 
-        self.skip = Upsample(scale_factor=upscale_ratio, mode="bicubic")
+        self.bicubic = Upsample(scale_factor=upscale_ratio, mode="bicubic")
 
         self.encoder = Encoder(num_channels, hidden_ratio, num_encoder_layers)
 
@@ -115,7 +115,7 @@ class UltraZoom(Module, PyTorchModelHubMixin):
             x: Input image tensor of shape (B, C, H, W).
         """
 
-        s = self.skip.forward(x)
+        s = self.bicubic.forward(x)
 
         z = self.encoder.forward(x)
         z = self.decoder.forward(z)

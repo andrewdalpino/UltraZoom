@@ -80,6 +80,5 @@ def main():
         save_image(y_pred.squeeze(0), f"{filename}_enhanced.png")
 
 
-
 if __name__ == "__main__":
     main()

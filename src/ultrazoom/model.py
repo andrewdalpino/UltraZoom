@@ -53,6 +53,7 @@ class UltraZoom(Module, PyTorchModelHubMixin):
         self,
         upscale_ratio: int,
         num_channels: int,
+        control_features: int,
         hidden_ratio: int,
         num_encoder_layers: int,
     ):
@@ -65,7 +66,9 @@ class UltraZoom(Module, PyTorchModelHubMixin):
 
         self.bicubic = Upsample(scale_factor=upscale_ratio, mode="bicubic")
 
-        self.encoder = Encoder(num_channels, hidden_ratio, num_encoder_layers)
+        self.encoder = Encoder(
+            num_channels, control_features, hidden_ratio, num_encoder_layers
+        )
 
         self.decoder = SubpixelConv2d(num_channels, upscale_ratio)
 
@@ -109,15 +112,16 @@ class UltraZoom(Module, PyTorchModelHubMixin):
                 for name in params:
                     remove_parametrizations(module, name)
 
-    def forward(self, x: Tensor) -> tuple[Tensor, Tensor]:
+    def forward(self, x: Tensor, c: Tensor) -> tuple[Tensor, Tensor]:
         """
         Args:
             x: Input image tensor of shape (B, C, H, W).
+            c: Control vector.
         """
 
         s = self.bicubic.forward(x)
 
-        z = self.encoder.forward(x)
+        z = self.encoder.forward(x, c)
         z = self.decoder.forward(z)
 
         z = s + z  # Global residual connection
@@ -125,30 +129,32 @@ class UltraZoom(Module, PyTorchModelHubMixin):
         return z, s
 
     @torch.inference_mode()
-    def upscale(self, x: Tensor) -> Tensor:
+    def upscale(self, x: Tensor, c: Tensor) -> Tensor:
         """
         Zoom and enhance the input image.
 
         Args:
             x: Input image tensor of shape (B, C, H, W).
+            c: Control vector.
         """
 
-        z, _ = self.forward(x)
+        z, _ = self.forward(x, c)
 
         z = torch.clamp(z, 0, 1)
 
         return z
 
     @torch.inference_mode()
-    def test_compare(self, x: Tensor) -> tuple[Tensor, Tensor]:
+    def test_compare(self, x: Tensor, c: Tensor) -> tuple[Tensor, Tensor]:
         """
         Return both the zoomed and enhanced images for comparison.
 
         Args:
             x: Input image tensor of shape (B, C, H, W).
+            c: Control vector.
         """
 
-        z, s = self.forward(x)
+        z, s = self.forward(x, c)
 
         z = torch.clamp(z, 0, 1)
         s = torch.clamp(s, 0, 1)
@@ -159,7 +165,13 @@ class UltraZoom(Module, PyTorchModelHubMixin):
 class Encoder(Module):
     """A low-resolution subnetwork employing a deep stack of encoder blocks."""
 
-    def __init__(self, num_channels: int, hidden_ratio: int, num_layers: int):
+    def __init__(
+        self,
+        num_channels: int,
+        control_features: int,
+        hidden_ratio: int,
+        num_layers: int,
+    ):
         super().__init__()
 
         assert num_layers > 0, "Number of layers must be greater than 0."
@@ -167,10 +179,13 @@ class Encoder(Module):
         self.stem = Conv2d(3, num_channels, kernel_size=3, padding=1)
 
         self.body = ModuleList(
-            [EncoderBlock(num_channels, hidden_ratio) for _ in range(num_layers)]
+            [
+                EncoderBlock(num_channels, control_features, hidden_ratio)
+                for _ in range(num_layers)
+            ]
         )
 
-        self.checkpoint = lambda layer, x: layer(x)
+        self.checkpoint = lambda layer, x, c: layer(x, c)
 
     def add_weight_norms(self) -> None:
         self.stem = weight_norm(self.stem)
@@ -194,11 +209,11 @@ class Encoder(Module):
 
         self.checkpoint = partial(torch_checkpoint, use_reentrant=False)
 
-    def forward(self, x: Tensor) -> Tensor:
+    def forward(self, x: Tensor, c: Tensor) -> Tensor:
         z = self.stem.forward(x)
 
         for layer in self.body:
-            z = self.checkpoint(layer, z)
+            z = self.checkpoint(layer, z, c)
 
         return z
 
@@ -206,25 +221,54 @@ class Encoder(Module):
 class EncoderBlock(Module):
     """A single encoder block consisting of two stages and a residual connection."""
 
-    def __init__(self, num_channels: int, hidden_ratio: int):
+    def __init__(self, num_channels: int, control_features: int, hidden_ratio: int):
         super().__init__()
 
-        self.stage1 = SpatialAttention(num_channels)
-        self.stage2 = InvertedBottleneck(num_channels, hidden_ratio)
+        self.stage1 = FiLMControl(num_channels, control_features)
+        self.stage2 = SpatialAttention(num_channels)
+        self.stage3 = InvertedBottleneck(num_channels, hidden_ratio)
 
     def add_weight_norms(self) -> None:
-        self.stage1.add_weight_norms()
         self.stage2.add_weight_norms()
+        self.stage3.add_weight_norms()
 
     def add_lora_adapters(self, rank: int, alpha: float) -> None:
-        self.stage1.add_lora_adapters(rank, alpha)
         self.stage2.add_lora_adapters(rank, alpha)
+        self.stage3.add_lora_adapters(rank, alpha)
 
-    def forward(self, x: Tensor) -> Tensor:
-        z = self.stage1.forward(x)
+    def forward(self, x: Tensor, c: Tensor) -> Tensor:
+        z = self.stage1.forward(x, c)
         z = self.stage2.forward(z)
+        z = self.stage3.forward(z)
 
         z = x + z  # Local residual connection
+
+        return z
+
+
+class FiLMControl(Module):
+    """Feature-wise Linear Modulation (FiLM) layer for conditioning on a control vector."""
+
+    def __init__(self, num_channels: int, control_features: int):
+        super().__init__()
+
+        assert num_channels > 0, "Number of channels must be greater than 0."
+        assert control_features > 0, "Control features must be greater than 0."
+
+        scale = torch.ones(control_features, num_channels)
+        shift = torch.zeros(control_features, num_channels)
+
+        self.scale = Parameter(scale)
+        self.shift = Parameter(shift)
+
+    def forward(self, x: Tensor, c: Tensor) -> Tensor:
+        gamma = c @ self.scale
+        beta = c @ self.shift
+
+        gamma = gamma.view(-1, x.size(1), 1, 1)
+        beta = beta.view(-1, x.size(1), 1, 1)
+
+        z = gamma * x + beta
 
         return z
 
@@ -355,6 +399,38 @@ class SubpixelConv2d(Module):
         return z
 
 
+class ChannelLoRA(Module):
+    """Low rank channel decomposition transformation."""
+
+    def __init__(self, layer: Conv2d, rank: int, alpha: float):
+        super().__init__()
+
+        assert rank > 0, "Rank must be greater than 0."
+        assert alpha > 0.0, "Alpha must be greater than 0."
+
+        out_channels, in_channels, h, w = layer.weight.shape
+
+        lora_a = torch.randn(h, w, out_channels, rank) / sqrt(rank)
+        lora_b = torch.zeros(h, w, rank, in_channels)
+
+        self.lora_a = Parameter(lora_a)
+        self.lora_b = Parameter(lora_b)
+
+        self.alpha = alpha
+
+    def forward(self, weight: Tensor) -> Tensor:
+        z = self.lora_a @ self.lora_b
+
+        z *= self.alpha
+
+        # Move channels to front to match weight shape
+        z = z.permute(2, 3, 0, 1)
+
+        z = weight + z
+
+        return z
+
+
 class ONNXModel(Module):
     """A wrapper class for exporting to ONNX format."""
 
@@ -363,8 +439,8 @@ class ONNXModel(Module):
 
         self.model = model
 
-    def forward(self, x: Tensor) -> Tensor:
-        return self.model.upscale(x)
+    def forward(self, x: Tensor, c: Tensor) -> Tensor:
+        return self.model.upscale(x, c)
 
 
 class Bouncer(Module):
@@ -519,33 +595,27 @@ class Detector(Module):
 
         stage1 = Sequential(
             PixelCrush(3, num_primary_channels, 2),
-            *[
-                DetectorBlock(num_primary_channels)
-                for _ in range(num_primary_layers - 1)
-            ],
+            *[DetectorBlock(num_primary_channels) for _ in range(num_primary_layers)],
         )
 
         stage2 = Sequential(
             PixelCrush(num_primary_channels, num_secondary_channels, 2),
             *[
                 DetectorBlock(num_secondary_channels)
-                for _ in range(num_secondary_layers - 1)
+                for _ in range(num_secondary_layers)
             ],
         )
 
         stage3 = Sequential(
             PixelCrush(num_secondary_channels, num_tertiary_channels, 2),
-            *[
-                DetectorBlock(num_tertiary_channels)
-                for _ in range(num_tertiary_layers - 1)
-            ],
+            *[DetectorBlock(num_tertiary_channels) for _ in range(num_tertiary_layers)],
         )
 
         stage4 = Sequential(
             PixelCrush(num_tertiary_channels, num_quaternary_channels, 2),
             *[
                 DetectorBlock(num_quaternary_channels)
-                for _ in range(num_quaternary_layers - 1)
+                for _ in range(num_quaternary_layers)
             ],
         )
 
@@ -660,37 +730,5 @@ class BinaryClassifier(Module):
 
     def forward(self, x: Tensor) -> Tensor:
         z = self.linear.forward(x)
-
-        return z
-
-
-class ChannelLoRA(Module):
-    """Low rank channel decomposition transformation."""
-
-    def __init__(self, layer: Conv2d, rank: int, alpha: float):
-        super().__init__()
-
-        assert rank > 0, "Rank must be greater than 0."
-        assert alpha > 0.0, "Alpha must be greater than 0."
-
-        out_channels, in_channels, h, w = layer.weight.shape
-
-        lora_a = torch.randn(h, w, out_channels, rank) / sqrt(rank)
-        lora_b = torch.zeros(h, w, rank, in_channels)
-
-        self.lora_a = Parameter(lora_a)
-        self.lora_b = Parameter(lora_b)
-
-        self.alpha = alpha
-
-    def forward(self, weight: Tensor) -> Tensor:
-        z = self.lora_a @ self.lora_b
-
-        z *= self.alpha
-
-        # Move channels to front to match weight shape
-        z = z.permute(2, 3, 0, 1)
-
-        z = weight + z
 
         return z

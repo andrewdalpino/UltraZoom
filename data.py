@@ -11,12 +11,8 @@ from torchvision.io import decode_image
 
 from torchvision.transforms.v2 import (
     Transform,
-    Compose,
     RandomChoice,
     Resize,
-    GaussianBlur,
-    GaussianNoise,
-    JPEG,
     ToDtype,
 )
 
@@ -24,15 +20,12 @@ from torchvision.transforms.v2.functional import InterpolationMode
 
 from PIL import Image
 
-from src.ultrazoom.model import UltraZoom
-
-from transforms import GreyNoise
+from transforms import GaussianBlur, GaussianNoise, JPEGCompression
 
 
-class ImageFolder(Dataset):
+class ControlMix(Dataset):
     """
-    A dataset of single HR images with a synthetic degradation function
-    used to create the LR counterpart.
+    A dataset of single HR images with a synthetic degradation function used to create the LR counterpart.
     """
 
     ALLOWED_EXTENSIONS = frozenset({".png", ".jpg", ".jpeg", ".webp", ".gif"})
@@ -44,73 +37,18 @@ class ImageFolder(Dataset):
         root_path: str,
         target_resolution: int,
         upscale_ratio: int,
-        pre_transformer: Transform | None,
-        blur_amount: float,
-        noise_amount: float,
+        pre_transform: Transform | None,
+        min_blur: float,
+        max_blur: float,
+        min_noise: float,
+        max_noise: float,
         min_compression: float,
         max_compression: float,
     ):
-        if upscale_ratio not in UltraZoom.AVAILABLE_UPSCALE_RATIOS:
+        if target_resolution <= 0:
             raise ValueError(
-                f"Upscale ratio must be either 2, 3, or 4, {upscale_ratio} given."
+                f"Target resolution must be positive, {target_resolution} given."
             )
-
-        if target_resolution % upscale_ratio != 0:
-            raise ValueError(
-                f"Target resolution must divide evenly into upscale_ratio."
-            )
-
-        if blur_amount < 0.0:
-            raise ValueError(f"Blur amount must be non-negative, {blur_amount} given.")
-
-        if noise_amount < 0.0:
-            raise ValueError(
-                f"Noise amount must be non-negative, {noise_amount} given."
-            )
-
-        if min_compression < 0.0 or min_compression > 1.0:
-            raise ValueError(
-                f"Min compression must be between 0 and 1, {min_compression} given."
-            )
-
-        if max_compression < min_compression:
-            raise ValueError(f"Max compression must be greater than min compression.")
-
-        blur_sigma = blur_amount * upscale_ratio
-        blur_kernel_size = 2 * int(3 * blur_sigma) + 1
-
-        degraded_resolution = target_resolution // upscale_ratio
-
-        min_degraded_quality = 100 - int(max_compression * 100)
-        max_degraded_quality = 100 - int(min_compression * 100)
-
-        degrade_transformer = Compose(
-            [
-                GaussianBlur(kernel_size=blur_kernel_size, sigma=blur_sigma),
-                RandomChoice(
-                    [
-                        Resize(
-                            degraded_resolution,
-                            interpolation=InterpolationMode.BICUBIC,
-                        ),
-                        Resize(
-                            degraded_resolution,
-                            interpolation=InterpolationMode.BILINEAR,
-                        ),
-                    ]
-                ),
-                JPEG(quality=(min_degraded_quality, max_degraded_quality)),
-                ToDtype(torch.float32, scale=True),
-                RandomChoice(
-                    [
-                        GaussianNoise(sigma=noise_amount),
-                        GreyNoise(sigma=noise_amount),
-                    ]
-                ),
-            ]
-        )
-
-        target_transformer = ToDtype(torch.float32, scale=True)
 
         image_paths = []
         dropped = 0
@@ -137,9 +75,38 @@ class ImageFolder(Dataset):
                 f"than the target resolution of {target_resolution}."
             )
 
-        self.pre_transformer = pre_transformer
-        self.degrade_transformer = degrade_transformer
-        self.target_transformer = target_transformer
+        min_blur_sigma = min_blur * upscale_ratio
+        max_blur_sigma = max_blur * upscale_ratio
+
+        blur_transform = GaussianBlur(min_blur_sigma, max_blur_sigma)
+
+        degraded_resolution = target_resolution // upscale_ratio
+
+        resize_transform = RandomChoice(
+            [
+                Resize(
+                    degraded_resolution,
+                    interpolation=InterpolationMode.BICUBIC,
+                ),
+                Resize(
+                    degraded_resolution,
+                    interpolation=InterpolationMode.BILINEAR,
+                ),
+            ]
+        )
+
+        compression_transform = JPEGCompression(min_compression, max_compression)
+
+        to_tensor_transform = ToDtype(torch.float32, scale=True)
+
+        noise_transform = GaussianNoise(min_noise, max_noise)
+
+        self.pre_transform = pre_transform
+        self.blur_transform = blur_transform
+        self.resize_transform = resize_transform
+        self.noise_transform = noise_transform
+        self.compression_transform = compression_transform
+        self.to_tensor_transform = to_tensor_transform
         self.image_paths = image_paths
 
     @classmethod
@@ -153,13 +120,20 @@ class ImageFolder(Dataset):
 
         image = decode_image(image_path, mode=self.IMAGE_MODE)
 
-        if self.pre_transformer:
-            image = self.pre_transformer(image)
+        if self.pre_transform:
+            image = self.pre_transform.forward(image)
 
-        x = self.degrade_transformer(image)
-        y = self.target_transformer(image)
+        x, blur_sigma = self.blur_transform.forward(image)
+        x = self.resize_transform.forward(x)
+        x, compression = self.compression_transform.forward(x)
+        x = self.to_tensor_transform.forward(x)
+        x, noise_sigma = self.noise_transform.forward(x)
 
-        return x, y
+        c = torch.tensor([blur_sigma, noise_sigma, compression], dtype=torch.float32)
+
+        y = self.to_tensor_transform.forward(image)
+
+        return x, c, y
 
     def __len__(self):
         return len(self.image_paths)

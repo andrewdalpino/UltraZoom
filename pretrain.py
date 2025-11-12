@@ -28,7 +28,7 @@ from torchmetrics.image import (
     VisualInformationFidelity,
 )
 
-from data import ImageFolder
+from data import ControlMix
 from src.ultrazoom.model import UltraZoom
 from loss import VGGLoss
 
@@ -48,9 +48,11 @@ def main():
         choices=UltraZoom.AVAILABLE_UPSCALE_RATIOS,
     )
     parser.add_argument("--target_resolution", default=256, type=int)
-    parser.add_argument("--blur_amount", default=0.5, type=float)
-    parser.add_argument("--noise_amount", default=0.02, type=float)
-    parser.add_argument("--min_compression", default=0.1, type=float)
+    parser.add_argument("--min_blur", default=0.0, type=float)
+    parser.add_argument("--max_blur", default=0.5, type=float)
+    parser.add_argument("--min_noise", default=0.0, type=float)
+    parser.add_argument("--max_noise", default=0.04, type=float)
+    parser.add_argument("--min_compression", default=0.0, type=float)
     parser.add_argument("--max_compression", default=0.3, type=float)
     parser.add_argument("--brightness_jitter", default=0.1, type=float)
     parser.add_argument("--contrast_jitter", default=0.1, type=float)
@@ -121,18 +123,20 @@ def main():
     logger = SummaryWriter(args.run_dir_path)
 
     new_dataset = partial(
-        ImageFolder,
+        ControlMix,
         target_resolution=args.target_resolution,
         upscale_ratio=args.upscale_ratio,
-        blur_amount=args.blur_amount,
-        noise_amount=args.noise_amount,
+        min_blur=args.min_blur,
+        max_blur=args.max_blur,
+        min_noise=args.min_noise,
+        max_noise=args.max_noise,
         min_compression=args.min_compression,
         max_compression=args.max_compression,
     )
 
     training = new_dataset(
         args.train_images_path,
-        pre_transformer=Compose(
+        pre_transform=Compose(
             [
                 RandomCrop(args.target_resolution),
                 RandomHorizontalFlip(),
@@ -148,7 +152,7 @@ def main():
 
     testing = new_dataset(
         args.test_images_path,
-        pre_transformer=CenterCrop(args.target_resolution),
+        pre_transform=CenterCrop(args.target_resolution),
     )
 
     new_dataloader = partial(
@@ -164,6 +168,7 @@ def main():
     model_args = {
         "upscale_ratio": args.upscale_ratio,
         "num_channels": args.num_channels,
+        "control_features": 3,
         "hidden_ratio": args.hidden_ratio,
         "num_encoder_layers": args.num_encoder_layers,
     }
@@ -216,14 +221,15 @@ def main():
         total_batches, total_steps = 0, 0
         total_gradient_norm = 0.0
 
-        for step, (x, y) in enumerate(
+        for step, (x, c, y) in enumerate(
             tqdm(train_loader, desc=f"Epoch {epoch}", leave=False), start=1
         ):
             x = x.to(args.device, non_blocking=True)
+            c = c.to(args.device, non_blocking=True)
             y = y.to(args.device, non_blocking=True)
 
             with amp_context:
-                y_pred, _ = model.forward(x)
+                y_pred, _ = model.forward(x, c)
 
                 l2_loss = l2_loss_function(y_pred, y)
                 vgg22_loss, vgg54_loss = vgg_loss_function(y_pred, y)
@@ -276,11 +282,12 @@ def main():
         if epoch % args.eval_interval == 0:
             model.eval()
 
-            for x, y in tqdm(test_loader, desc="Testing", leave=False):
+            for x, c, y in tqdm(test_loader, desc="Testing", leave=False):
                 x = x.to(args.device, non_blocking=True)
+                c = c.to(args.device, non_blocking=True)
                 y = y.to(args.device, non_blocking=True)
 
-                y_pred = model.upscale(x)
+                y_pred = model.upscale(x, c)
 
                 psnr_metric.update(y_pred, y)
                 ssim_metric.update(y_pred, y)

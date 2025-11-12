@@ -20,6 +20,9 @@ def main():
     parser.add_argument(
         "--checkpoint_path", default="./checkpoints/checkpoint.pt", type=str
     )
+    parser.add_argument("--deblur", default="0.5", type=float)
+    parser.add_argument("--denoise", default="0.02", type=float)
+    parser.add_argument("--deartifact", default="0.2", type=float)
     parser.add_argument("--device", default="cpu", type=str)
 
     args = parser.parse_args()
@@ -55,8 +58,15 @@ def main():
 
     x = image_to_tensor(image).unsqueeze(0).to(args.device)
 
+    c = (
+        torch.tensor([args.deblur, args.denoise, args.deartifact])
+        .unsqueeze(0)
+        .to(args.device)
+    )
+
     print("Upscaling ...")
-    y_pred, y_bicubic = model.test_compare(x)
+
+    y_pred, y_bicubic = model.test_compare(x, c)
 
     pair = torch.stack(
         [

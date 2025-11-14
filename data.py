@@ -109,15 +109,12 @@ class ControlMix(Dataset):
 
         to_tensor_transform = ToDtype(torch.float32, scale=True)
 
-        to_image_transform = ToDtype(torch.uint8)
-
         self.pre_transform = pre_transform
         self.blur_transform = blur_transform
         self.gaussian_noise_transform = gaussian_noise_transform
         self.resize_transform = resize_transform
         self.compression_transform = compression_transform
         self.to_tensor_transform = to_tensor_transform
-        self.to_image_transform = to_image_transform
         self.image_paths = image_paths
         self.min_gaussian_blur = min_gaussian_blur
         self.max_gaussian_blur = max_gaussian_blur
@@ -150,22 +147,22 @@ class ControlMix(Dataset):
         x, jpeg_compression = self.compression_transform.forward(x)
         x = self.to_tensor_transform.forward(x)
 
-        gaussian_deblur = (gaussian_blur_sigma - self.min_gaussian_blur) / (
+        gaussian_blur = (gaussian_blur_sigma - self.min_gaussian_blur) / (
             self.max_gaussian_blur - self.min_gaussian_blur
         )
 
-        gaussian_denoise = (gaussian_noise_sigma - self.min_gaussian_noise) / (
+        gaussian_noise = (gaussian_noise_sigma - self.min_gaussian_noise) / (
             self.max_gaussian_noise - self.min_gaussian_noise
         )
 
-        jpeg_deartifact = (jpeg_compression - self.min_compression) / (
+        jpeg_compression = (jpeg_compression - self.min_compression) / (
             self.max_compression - self.min_compression
         )
 
         c = ControlVector(
-            gaussian_deblur,
-            gaussian_denoise,
-            jpeg_deartifact,
+            gaussian_blur,
+            gaussian_noise,
+            jpeg_compression,
         ).to_tensor()
 
         y = self.to_tensor_transform.forward(image)

@@ -47,35 +47,6 @@ class GaussianBlur(Transform):
         return out, sigma
 
 
-class PoissonNoise(Transform):
-    """
-    A transform that adds Poisson-distributed noise to an image.
-    """
-
-    def __init__(self, min_scale: float, max_scale: float):
-
-        super().__init__()
-
-        self.min_scale = min_scale
-        self.max_scale = max_scale
-
-    def make_params(self, flat_inputs: list[Any]) -> dict[str, Any]:
-        scale = random.uniform(self.min_scale, self.max_scale)
-
-        return {"scale": scale}
-
-    def transform(self, x: Any, params: dict[str, Any]) -> Any:
-        scale = params["scale"]
-
-        out = torch.poisson(x * scale) / scale
-
-        out = torch.clamp(out, 0.0, 1.0)
-
-        out = tv_tensors.wrap(out, like=x)
-
-        return out, scale
-
-
 class GaussianNoise(Transform):
     """
     A transform that adds Gaussian-distributed noise to an image.

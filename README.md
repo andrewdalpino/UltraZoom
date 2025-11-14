@@ -1,14 +1,14 @@
 # Ultra Zoom
 
-A fast single image super-resolution (SISR) model for upscaling images with ultra high-quality. Ultra Zoom uses a two-stage "zoom in and enhance" mechanism that uses a fast deterministic upscaling algorithm to upscale the image and then enhances through a residual pathway that operates primarily in the low-resolution subspace of a deep neural network.
+A fast single image super-resolution (SISR) model for upscaling images with ultra high-quality. Ultra Zoom uses a two-stage "zoom in and enhance" mechanism that utilizes a fast deterministic upscaling algorithm to upscale the image and then enhances it through a steerable residual pathway that operates primarily in the low-resolution subspace of a deep neural network.
 
 ## Key Features
 
-- **Fast and scalable**: Instead of predicting de novo pixels, Ultra Zoom uses a unique "zoom in and enhance" mechanism that combines the speed of deterministic bicubic interpolation with the power of a deep neural network.
+- **Fast and scalable**: Ultra Zoom uses a unique "zoom in and enhance" mechanism that combines the speed of deterministic bicubic interpolation with the power of a deep neural network.
 
-- **Full RGB**: Unlike many efficient SR models that only operate in the luminance domain, Ultra Zoom operates within the full RGB color domain enhancing both luminance and chrominance for the best possible quality.
+- **Controllable enhancements**: Ultra Zoom integrates channel-wise control modules directly into the architecture, allowing you to finely adjust the amount of denoising, deblurring, and deartifacting to suite your image source.
 
-- **Denoising and Deblurring**: Removes multiple types of noise and blur making images look crisp and clean.
+- **Full RGB**: Unlike many efficient SR models that only operate in the luminance domain, Ultra Zoom operates within the full RGB color domain enhancing both luminance and chrominance for the best possible image quality.
 
 ## Demo
 
@@ -45,9 +45,10 @@ from torchvision.io import decode_image, ImageReadMode
 from torchvision.transforms.v2 import ToDtype, ToPILImage
 
 from ultrazoom.model import UltraZoom
+from ultrazoom.control import ControlVector
 
 
-model_name = "andrewdalpino/UltraZoom-2X"
+model_name = "andrewdalpino/UltraZoom-V2-2X-Ctrl"
 image_path = "./dataset/bird.png"
 
 model = UltraZoom.from_pretrained(model_name)
@@ -59,7 +60,13 @@ image = decode_image(image_path, mode=ImageReadMode.RGB)
 
 x = image_to_tensor(image).unsqueeze(0)
 
-y_pred = model.upscale(x)
+c = ControlVector(
+    gaussian_blur=0.5,
+    gaussian_noise=0.5,
+    jpeg_compression=0.5
+).to_tensor()
+
+y_pred = model.upscale(x, c)
 
 pil_image = tensor_to_pil(y_pred.squeeze(0))
 
@@ -205,27 +212,30 @@ python fine-tune.py --base_checkpoint_path=./checkpoints/2X-100.pt --critic_mode
 | --device | "cpu" | str | The device to run the computation on. |
 | --seed | None | int | The seed for the random number generator. |
 
-## Upscaling
+## Test Comparison
 
-You can use the provided `upscale.py` script to generate upscaled images from the trained model at the default checkpoint like in the example below. In addition, you can create your own inferencing pipeline using the same model under the hood that leverages batch processing for large scale production systems.
+You can use the provided `test-compare.py` script to generate upscaled images from the trained model at the default checkpoint like in the example below.
 
 ```sh
-python upscale.py --image_path="./example.jpg"
+python test-compare.py --image_path="./example.jpg"
 ```
 
 To generate images using a different checkpoint you can use the `checkpoint_path` argument like in the example below.
 
 ```sh
-python upscale.py --checkpoint_path="./checkpoints/fine-tuned.pt" --image_path="./example.jpg"
+python test-compare.py --checkpoint_path="./checkpoints/fine-tuned.pt" --image_path="./example.jpg"
 ```
 
-### Upscaling Arguments
+### Test compare Arguments
 
 | Argument | Default | Type | Description |
 |---|---|---|---|
 | --image_path | None | str | The path to the image file to be upscaled by the model. |
 | --checkpoint_path | "./checkpoints/fine-tuned.pt" | str | The path to the base checkpoint file on disk. |
-| --device | "cuda" | str | The device to run the computation on. |
+| --gaussian_blur | 0.5 | float | The strength of gaussian blur removal from the image, between 0 and 1. |
+| --gaussian_noise | 0.5 | float | The strength of gaussian noise removal from the image, between 0 and 1. |
+| --jpeg_compression | 0.5 | float | The strength of JPEG compression artifact removeal from the image, between 0 and 1. |
+| --device | "cpu" | str | The device to run the computation on. |
 
 ## References
 

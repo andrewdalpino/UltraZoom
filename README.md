@@ -22,9 +22,12 @@ View at full resolution for best results. More comparisons can be found [here](h
 
 The following pretrained models are available on HuggingFace Hub.
 
-| Name | Zoom | Num Channels | Encoder Layers | Parameters |
-|---|---|---|---|---|
-| [andrewdalpino/UltraZoom-V2-2X-Ctrl](https://huggingface.co/andrewdalpino/UltraZoom-V2-2X-Ctrl) | 2X | 48 | 20 | 1.8M |
+| Name | Zoom | Num Channels | Encoder Layers | Parameters | Library Version |
+|---|---|---|---|---|---|
+| [andrewdalpino/UltraZoom-2X-Ctrl](https://huggingface.co/andrewdalpino/UltraZoom-2X-Ctrl) | 2X | 48 | 20 | 1.8M | 0.2.x |
+| [andrewdalpino/UltraZoom-2X](https://huggingface.co/andrewdalpino/UltraZoom-2X) | 2X | 48 | 20 | 1.8M | 0.1.x |
+| [andrewdalpino/UltraZoom-3X](https://huggingface.co/andrewdalpino/UltraZoom-3X) | 3X | 54 | 30 | 3.5M | 0.1.x |
+| [andrewdalpino/UltraZoom-4X](https://huggingface.co/andrewdalpino/UltraZoom-4X) | 4X | 96 | 40 | 14M | 0.1.x |
 
 ## Pretrained Example
 

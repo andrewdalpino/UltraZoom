@@ -8,23 +8,23 @@ class ControlVector:
 
     def __init__(
         self,
-        gaussian_deblur: float,
-        gaussian_denoise: float,
-        jpeg_deartifact: float,
+        gaussian_blur: float,
+        gaussian_noise: float,
+        jpeg_compression: float,
     ):
-        assert 0.0 <= gaussian_deblur <= 1.0
-        assert 0.0 <= gaussian_denoise <= 1.0
-        assert 0.0 <= jpeg_deartifact <= 1.0
+        assert 0.0 <= gaussian_blur <= 1.0
+        assert 0.0 <= gaussian_noise <= 1.0
+        assert 0.0 <= jpeg_compression <= 1.0
 
-        self.gaussian_deblur = gaussian_deblur
-        self.gaussian_denoise = gaussian_denoise
-        self.jpeg_deartifact = jpeg_deartifact
+        self.gaussian_blur = gaussian_blur
+        self.gaussian_noise = gaussian_noise
+        self.jpeg_compression = jpeg_compression
 
     def to_tensor(self) -> Tensor:
         return torch.tensor(
             [
-                self.gaussian_deblur,
-                self.gaussian_denoise,
-                self.jpeg_deartifact,
+                self.gaussian_blur,
+                self.gaussian_noise,
+                self.jpeg_compression,
             ]
         )

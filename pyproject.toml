@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ultrazoom"
-description = "A fast single image super-resolution (SISR) model for upscaling images without loss of detail."
-version = "0.1.2"
+description = "A fast single image super-resolution (SISR) model for upscaling images with ultra high-quality."
+version = "0.2.1"
 requires-python = ">= 3.10"
 dependencies = [
   "torch~=2.9.0",

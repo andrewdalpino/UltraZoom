@@ -31,7 +31,7 @@ from torchmetrics.image import (
 
 from torchmetrics.classification import BinaryPrecision, BinaryRecall
 
-from data import ImageFolder
+from data import ControlMix
 from src.ultrazoom.model import UltraZoom, Bouncer
 from loss import RelativisticBCELoss
 
@@ -46,10 +46,12 @@ def main():
     parser.add_argument("--test_images_path", default="./dataset/test", type=str)
     parser.add_argument("--num_dataset_processes", default=8, type=int)
     parser.add_argument("--target_resolution", default=256, type=int)
-    parser.add_argument("--blur_amount", default=0.5, type=float)
-    parser.add_argument("--noise_amount", default=0.02, type=float)
-    parser.add_argument("--min_compression", default=0.1, type=float)
-    parser.add_argument("--max_compression", default=0.3, type=float)
+    parser.add_argument("--min_gaussian_blur", default=0.0, type=float)
+    parser.add_argument("--max_gaussian_blur", default=1.0, type=float)
+    parser.add_argument("--min_gaussian_noise", default=0.0, type=float)
+    parser.add_argument("--max_gaussian_noise", default=0.1, type=float)
+    parser.add_argument("--min_compression", default=0.0, type=float)
+    parser.add_argument("--max_compression", default=0.8, type=float)
     parser.add_argument("--brightness_jitter", default=0.1, type=float)
     parser.add_argument("--contrast_jitter", default=0.1, type=float)
     parser.add_argument("--saturation_jitter", default=0.1, type=float)
@@ -59,9 +61,9 @@ def main():
     parser.add_argument("--upscaler_learning_rate", default=1e-4, type=float)
     parser.add_argument("--upscaler_max_gradient_norm", default=1.0, type=float)
     parser.add_argument("--critic_learning_rate", default=5e-4, type=float)
-    parser.add_argument("--critic_max_gradient_norm", default=10.0, type=float)
-    parser.add_argument("--num_epochs", default=50, type=int)
-    parser.add_argument("--critic_warmup_epochs", default=3, type=int)
+    parser.add_argument("--critic_max_gradient_norm", default=5.0, type=float)
+    parser.add_argument("--num_epochs", default=100, type=int)
+    parser.add_argument("--critic_warmup_epochs", default=1, type=int)
     parser.add_argument(
         "--critic_model_size", default="small", choices=Bouncer.AVAILABLE_MODEL_SIZES
     )
@@ -128,18 +130,20 @@ def main():
     upscaler_args = checkpoint["model_args"]
 
     new_dataset = partial(
-        ImageFolder,
+        ControlMix,
         target_resolution=args.target_resolution,
         upscale_ratio=upscaler_args["upscale_ratio"],
-        blur_amount=args.blur_amount,
-        noise_amount=args.noise_amount,
+        min_gaussian_blur=args.min_gaussian_blur,
+        max_gaussian_blur=args.max_gaussian_blur,
+        min_gaussian_noise=args.min_gaussian_noise,
+        max_gaussian_noise=args.max_gaussian_noise,
         min_compression=args.min_compression,
         max_compression=args.max_compression,
     )
 
     training = new_dataset(
         args.train_images_path,
-        pre_transformer=Compose(
+        pre_transform=Compose(
             [
                 RandomCrop(args.target_resolution),
                 RandomHorizontalFlip(),
@@ -155,7 +159,7 @@ def main():
 
     testing = new_dataset(
         args.test_images_path,
-        pre_transformer=CenterCrop(args.target_resolution),
+        pre_transform=CenterCrop(args.target_resolution),
     )
 
     new_dataloader = partial(
@@ -245,10 +249,11 @@ def main():
 
         is_warmup = epoch <= args.critic_warmup_epochs
 
-        for step, (x, y) in enumerate(
+        for step, (x, c, y) in enumerate(
             tqdm(train_loader, desc=f"Epoch {epoch}", leave=False), start=1
         ):
             x = x.to(args.device, non_blocking=True)
+            c = c.to(args.device, non_blocking=True)
             y = y.to(args.device, non_blocking=True)
 
             y_real = torch.full((y.size(0), 1), 1.0).to(args.device)
@@ -257,7 +262,7 @@ def main():
             update_this_step = step % args.gradient_accumulation_steps == 0
 
             with amp_context:
-                u_pred, _ = upscaler.forward(x)
+                u_pred, _ = upscaler.forward(x, c)
 
                 _, _, _, _, c_pred_fake = critic.forward(u_pred.detach())
                 _, _, _, _, c_pred_real = critic.forward(y)
@@ -350,14 +355,15 @@ def main():
             upscaler.eval()
             critic.eval()
 
-            for x, y in tqdm(test_loader, desc="Testing", leave=False):
+            for x, c, y in tqdm(test_loader, desc="Testing", leave=False):
                 x = x.to(args.device, non_blocking=True)
+                c = c.to(args.device, non_blocking=True)
                 y = y.to(args.device, non_blocking=True)
 
                 y_real = torch.full((y.size(0), 1), 1.0).to(args.device)
                 y_fake = torch.full((y.size(0), 1), 0.0).to(args.device)
 
-                u_pred = upscaler.upscale(x)
+                u_pred = upscaler.upscale(x, c)
 
                 c_pred_real = critic.predict(y)
                 c_pred_fake = critic.predict(u_pred)

@@ -3,7 +3,7 @@ from warnings import warn
 
 import torch
 
-from torch import Tensor, linspace
+from torch import Tensor
 
 from torch.utils.data import Dataset
 
@@ -11,12 +11,8 @@ from torchvision.io import decode_image
 
 from torchvision.transforms.v2 import (
     Transform,
-    Compose,
     RandomChoice,
     Resize,
-    GaussianBlur,
-    GaussianNoise,
-    JPEG,
     ToDtype,
 )
 
@@ -24,15 +20,14 @@ from torchvision.transforms.v2.functional import InterpolationMode
 
 from PIL import Image
 
-from src.ultrazoom.model import UltraZoom
+from src.ultrazoom.control import ControlVector
 
-from transforms import GreyNoise
+from transforms import GaussianBlur, GaussianNoise, JPEGCompression
 
 
-class ImageFolder(Dataset):
+class ControlMix(Dataset):
     """
-    A dataset of single HR images with a synthetic degradation function
-    used to create the LR counterpart.
+    A dataset of single HR images with a blind degradation function used to derive the LR counterpart.
     """
 
     ALLOWED_EXTENSIONS = frozenset({".png", ".jpg", ".jpeg", ".webp", ".gif"})
@@ -44,73 +39,27 @@ class ImageFolder(Dataset):
         root_path: str,
         target_resolution: int,
         upscale_ratio: int,
-        pre_transformer: Transform | None,
-        blur_amount: float,
-        noise_amount: float,
+        pre_transform: Transform | None,
+        min_gaussian_blur: float,
+        max_gaussian_blur: float,
+        min_gaussian_noise: float,
+        max_gaussian_noise: float,
         min_compression: float,
         max_compression: float,
     ):
-        if upscale_ratio not in UltraZoom.AVAILABLE_UPSCALE_RATIOS:
+        if target_resolution <= 0:
             raise ValueError(
-                f"Upscale ratio must be either 2, 3, or 4, {upscale_ratio} given."
+                f"Target resolution must be positive, {target_resolution} given."
             )
 
-        if target_resolution % upscale_ratio != 0:
-            raise ValueError(
-                f"Target resolution must divide evenly into upscale_ratio."
-            )
+        if min_gaussian_blur == max_gaussian_blur:
+            raise ValueError("Min and max Gaussian blur cannot be equal.")
 
-        if blur_amount < 0.0:
-            raise ValueError(f"Blur amount must be non-negative, {blur_amount} given.")
+        if min_gaussian_noise == max_gaussian_noise:
+            raise ValueError("Min and max Gaussian noise cannot be equal.")
 
-        if noise_amount < 0.0:
-            raise ValueError(
-                f"Noise amount must be non-negative, {noise_amount} given."
-            )
-
-        if min_compression < 0.0 or min_compression > 1.0:
-            raise ValueError(
-                f"Min compression must be between 0 and 1, {min_compression} given."
-            )
-
-        if max_compression < min_compression:
-            raise ValueError(f"Max compression must be greater than min compression.")
-
-        blur_sigma = blur_amount * upscale_ratio
-        blur_kernel_size = 2 * int(3 * blur_sigma) + 1
-
-        degraded_resolution = target_resolution // upscale_ratio
-
-        min_degraded_quality = 100 - int(max_compression * 100)
-        max_degraded_quality = 100 - int(min_compression * 100)
-
-        degrade_transformer = Compose(
-            [
-                GaussianBlur(kernel_size=blur_kernel_size, sigma=blur_sigma),
-                RandomChoice(
-                    [
-                        Resize(
-                            degraded_resolution,
-                            interpolation=InterpolationMode.BICUBIC,
-                        ),
-                        Resize(
-                            degraded_resolution,
-                            interpolation=InterpolationMode.BILINEAR,
-                        ),
-                    ]
-                ),
-                JPEG(quality=(min_degraded_quality, max_degraded_quality)),
-                ToDtype(torch.float32, scale=True),
-                RandomChoice(
-                    [
-                        GaussianNoise(sigma=noise_amount),
-                        GreyNoise(sigma=noise_amount),
-                    ]
-                ),
-            ]
-        )
-
-        target_transformer = ToDtype(torch.float32, scale=True)
+        if min_compression == max_compression:
+            raise ValueError("Min and max compression cannot be equal.")
 
         image_paths = []
         dropped = 0
@@ -137,10 +86,46 @@ class ImageFolder(Dataset):
                 f"than the target resolution of {target_resolution}."
             )
 
-        self.pre_transformer = pre_transformer
-        self.degrade_transformer = degrade_transformer
-        self.target_transformer = target_transformer
+        blur_transform = GaussianBlur(min_gaussian_blur, max_gaussian_blur)
+
+        gaussian_noise_transform = GaussianNoise(min_gaussian_noise, max_gaussian_noise)
+
+        degraded_resolution = target_resolution // upscale_ratio
+
+        resize_transform = RandomChoice(
+            [
+                Resize(
+                    degraded_resolution,
+                    interpolation=InterpolationMode.BICUBIC,
+                ),
+                Resize(
+                    degraded_resolution,
+                    interpolation=InterpolationMode.BILINEAR,
+                ),
+            ]
+        )
+
+        compression_transform = JPEGCompression(min_compression, max_compression)
+
+        to_tensor_transform = ToDtype(torch.float32, scale=True)
+
+        self.pre_transform = pre_transform
+        self.blur_transform = blur_transform
+        self.gaussian_noise_transform = gaussian_noise_transform
+        self.resize_transform = resize_transform
+        self.compression_transform = compression_transform
+        self.to_tensor_transform = to_tensor_transform
         self.image_paths = image_paths
+        self.min_gaussian_blur = min_gaussian_blur
+        self.max_gaussian_blur = max_gaussian_blur
+        self.min_gaussian_noise = min_gaussian_noise
+        self.max_gaussian_noise = max_gaussian_noise
+        self.min_compression = min_compression
+        self.max_compression = max_compression
+
+    @property
+    def control_features(self) -> int:
+        return 3
 
     @classmethod
     def has_image_extension(cls, filename: str) -> bool:
@@ -148,72 +133,41 @@ class ImageFolder(Dataset):
 
         return extension in cls.ALLOWED_EXTENSIONS
 
-    def __getitem__(self, index: int) -> tuple[Tensor, Tensor]:
+    def __getitem__(self, index: int) -> tuple[Tensor, ControlVector, Tensor]:
         image_path = self.image_paths[index]
 
         image = decode_image(image_path, mode=self.IMAGE_MODE)
 
-        if self.pre_transformer:
-            image = self.pre_transformer(image)
+        if self.pre_transform:
+            image = self.pre_transform.forward(image)
 
-        x = self.degrade_transformer(image)
-        y = self.target_transformer(image)
+        x, gaussian_blur_sigma = self.blur_transform.forward(image)
+        x, gaussian_noise_sigma = self.gaussian_noise_transform.forward(x)
+        x = self.resize_transform.forward(x)
+        x, jpeg_compression = self.compression_transform.forward(x)
+        x = self.to_tensor_transform.forward(x)
 
-        return x, y
+        gaussian_blur = (gaussian_blur_sigma - self.min_gaussian_blur) / (
+            self.max_gaussian_blur - self.min_gaussian_blur
+        )
+
+        gaussian_noise = (gaussian_noise_sigma - self.min_gaussian_noise) / (
+            self.max_gaussian_noise - self.min_gaussian_noise
+        )
+
+        jpeg_compression = (jpeg_compression - self.min_compression) / (
+            self.max_compression - self.min_compression
+        )
+
+        c = ControlVector(
+            gaussian_blur,
+            gaussian_noise,
+            jpeg_compression,
+        ).to_tensor()
+
+        y = self.to_tensor_transform.forward(image)
+
+        return x, c, y
 
     def __len__(self):
         return len(self.image_paths)
-
-
-class ImagePairs(Dataset):
-    """
-    A dataset consisting of paired LR and HR images with the same name but in
-    separate folders.
-    """
-
-    ALLOWED_EXTENSIONS = frozenset({".png", ".jpg", ".jpeg", ".webp", ".gif"})
-
-    IMAGE_MODE = "RGB"
-
-    def __init__(self, lr_root_path: str, hr_root_path: str):
-        lr_image_paths = []
-        hr_image_paths = []
-
-        batch = [
-            (lr_root_path, lr_image_paths),
-            (hr_root_path, hr_image_paths),
-        ]
-
-        for root_path, image_paths in batch:
-            for folder_path, _, filenames in walk(root_path):
-                for filename in filenames:
-                    if self.has_image_extension(filename):
-                        image_path = path.join(folder_path, filename)
-
-                        image_paths.append(image_path)
-
-        self.lr_image_paths = lr_image_paths
-        self.hr_image_paths = hr_image_paths
-
-        self.transformer = ToDtype(torch.float32, scale=True)
-
-    @classmethod
-    def has_image_extension(cls, filename: str) -> bool:
-        _, extension = path.splitext(filename)
-
-        return extension in cls.ALLOWED_EXTENSIONS
-
-    def __getitem__(self, index: int) -> tuple[Tensor, Tensor]:
-        lr_image_path = self.lr_image_paths[index]
-        hr_image_path = self.hr_image_paths[index]
-
-        lr_image = decode_image(lr_image_path, mode=self.IMAGE_MODE)
-        hr_image = decode_image(hr_image_path, mode=self.IMAGE_MODE)
-
-        x = self.transformer(lr_image)
-        y = self.transformer(hr_image)
-
-        return x, y
-
-    def __len__(self):
-        return len(self.lr_image_paths)

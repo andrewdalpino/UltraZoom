@@ -1,14 +1,14 @@
 # Ultra Zoom
 
-A fast single image super-resolution (SISR) model for upscaling images with ultra high-quality. Ultra Zoom uses a two-stage "zoom in and enhance" mechanism that uses a fast deterministic upscaling algorithm to upscale the image and then enhances through a residual pathway that operates primarily in the low-resolution subspace of a deep neural network.
+A fast single image super-resolution (SISR) model for upscaling images with ultra high-quality. Ultra Zoom uses a two-stage "zoom in and enhance" mechanism that utilizes a fast deterministic upscaling algorithm to upscale the image and then enhances it through a steerable residual pathway that operates primarily in the low-resolution subspace of a deep neural network.
 
 ## Key Features
 
-- **Fast and scalable**: Instead of predicting de novo pixels, Ultra Zoom uses a unique "zoom in and enhance" mechanism that combines the speed of deterministic bicubic interpolation with the power of a deep neural network.
+- **Fast and scalable**: Ultra Zoom uses a unique "zoom in and enhance" mechanism that combines the speed of deterministic bicubic interpolation with the power of a deep neural network.
 
-- **Full RGB**: Unlike many efficient SR models that only operate in the luminance domain, Ultra Zoom operates within the full RGB color domain enhancing both luminance and chrominance for the best possible quality.
+- **Controllable enhancements**: Ultra Zoom integrates channel-wise control modules directly into the architecture, allowing you to finely adjust the amount of denoising, deblurring, and deartifacting to suite your image source.
 
-- **Denoising and Deblurring**: Removes multiple types of noise and blur making images look crisp and clean.
+- **Full RGB**: Unlike many efficient SR models that only operate in the luminance domain, Ultra Zoom operates within the full RGB color domain enhancing both luminance and chrominance for the best possible image quality.
 
 ## Demo
 
@@ -22,11 +22,12 @@ View at full resolution for best results. More comparisons can be found [here](h
 
 The following pretrained models are available on HuggingFace Hub.
 
-| Name | Zoom | Num Channels | Encoder Layers | Parameters |
-|---|---|---|---|---|
-| [andrewdalpino/UltraZoom-2X](https://huggingface.co/andrewdalpino/UltraZoom-2X) | 2X | 48 | 20 | 1.8M |
-| [andrewdalpino/UltraZoom-3X](https://huggingface.co/andrewdalpino/UltraZoom-3X) | 3X | 54 | 30 | 3.5M |
-| [andrewdalpino/UltraZoom-4X](https://huggingface.co/andrewdalpino/UltraZoom-4X) | 4X | 96 | 40 | 14M |
+| Name | Zoom | Num Channels | Encoder Layers | Parameters | Library Version |
+|---|---|---|---|---|---|
+| [andrewdalpino/UltraZoom-2X-Ctrl](https://huggingface.co/andrewdalpino/UltraZoom-2X-Ctrl) | 2X | 48 | 20 | 1.8M | 0.2.x |
+| [andrewdalpino/UltraZoom-2X](https://huggingface.co/andrewdalpino/UltraZoom-2X) | 2X | 48 | 20 | 1.8M | 0.1.x |
+| [andrewdalpino/UltraZoom-3X](https://huggingface.co/andrewdalpino/UltraZoom-3X) | 3X | 54 | 30 | 3.5M | 0.1.x |
+| [andrewdalpino/UltraZoom-4X](https://huggingface.co/andrewdalpino/UltraZoom-4X) | 4X | 96 | 40 | 14M | 0.1.x |
 
 ## Pretrained Example
 
@@ -45,9 +46,10 @@ from torchvision.io import decode_image, ImageReadMode
 from torchvision.transforms.v2 import ToDtype, ToPILImage
 
 from ultrazoom.model import UltraZoom
+from ultrazoom.control import ControlVector
 
 
-model_name = "andrewdalpino/UltraZoom-2X"
+model_name = "andrewdalpino/UltraZoom-V2-2X-Ctrl"
 image_path = "./dataset/bird.png"
 
 model = UltraZoom.from_pretrained(model_name)
@@ -59,7 +61,13 @@ image = decode_image(image_path, mode=ImageReadMode.RGB)
 
 x = image_to_tensor(image).unsqueeze(0)
 
-y_pred = model.upscale(x)
+c = ControlVector(
+    gaussian_blur=0.5,
+    gaussian_noise=0.5,
+    jpeg_compression=0.5
+).to_tensor()
+
+y_pred = model.upscale(x, c)
 
 pil_image = tensor_to_pil(y_pred.squeeze(0))
 
@@ -131,10 +139,12 @@ Then navigate to the dashboard using your favorite web browser.
 | --num_dataset_processes | 8 | int | The number of CPU processes to use to preprocess the dataset. |
 | --target_resolution | 256 | int | The number of pixels in the height and width dimensions of the training images. |
 | --upscale_ratio | 2 | (1, 2, 3, 4) | The upscaling or zoom factor. |
-| --blur_amount | 0.5 | float | The amount of Gaussian blur to apply to the degraded low-resolution image. |
-| --noise_amount | 0.02 | float | The amount of Gaussian noise to add to the degraded low-resolution image. |
-| --min_compression | 0.1 | float | The minimum amount of JPEG compression to apply to the degraded low-resolution image. |
-| --max_compression | 0.3 | float | The maximum amount of JPEG compression to apply to the degraded low-resolution image. |
+| --min_gaussian_blur | 0.0 | float | The minimum amount of Gaussian blur to apply to the degraded low-resolution image. |
+| --max_gaussian_blur | 1.0 | float | The maximum amount of Gaussian blur to apply to the degraded low-resolution image. |
+| --min_gaussian_noise | 0.0 | float | The minimum amount of Gaussian noise to add to the degraded low-resolution image. |
+| --max_gaussian_noise | 0.1 | float | The maximum amount of Gaussian noise to add to the degraded low-resolution image. |
+| --min_compression | 0.0 | float | The minimum amount of JPEG compression to apply to the degraded low-resolution image. |
+| --max_compression | 0.8 | float | The maximum amount of JPEG compression to apply to the degraded low-resolution image. |
 | --brightness_jitter | 0.1 | float | The amount of jitter applied to the brightness of the training images. |
 | --contrast_jitter | 0.1 | float | The amount of jitter applied to the contrast of the training images. |
 | --saturation_jitter | 0.1 | float | The amount of jitter applied to the saturation of the training images. |
@@ -167,7 +177,7 @@ python fine-tune.py --base_checkpoint_path=./checkpoints/2X-100.pt
 To adjust the size of the critic model use the `critic_model_size` argument.
 
 ```sh
-python fine-tune.py --base_checkpoint_path=./checkpoints/2X-100.pt --critic_model_size=large
+python fine-tune.py --base_checkpoint_path="./checkpoints/2X-100.pt" --critic_model_size=medium
 ```
 
 ### Fine-tuning Arguments
@@ -178,26 +188,28 @@ python fine-tune.py --base_checkpoint_path=./checkpoints/2X-100.pt --critic_mode
 | --train_images_path | "./dataset/train" | str | The path to the folder containing your training images. |
 | --test_images_path | "./dataset/test" | str | The path to the folder containing your testing images. |
 | --num_dataset_processes | 8 | int | The number of CPU processes to use to preprocess the dataset. |
-| --target_resolution | 256 | int | The number of pixels in the height and width dimensions of the training images. |
-| --blur_amount | 0.5 | float | The amount of Gaussian blur to apply to the degraded low-resolution image. |
-| --noise_amount | 0.02 | float | The amount of Gaussian noise to add to the degraded low-resolution image. |
-| --min_compression | 0.1 | float | The minimum amount of JPEG compression to apply to the degraded low-resolution image. |
-| --max_compression | 0.3 | float | The maximum amount of JPEG compression to apply to the degraded low-resolution image. |
+| --target_resolution | 512 | int | The number of pixels in the height and width dimensions of the training images. |
+| --min_gaussian_blur | 0.0 | float | The minimum amount of Gaussian blur to apply to the degraded low-resolution image. |
+| --max_gaussian_blur | 1.0 | float | The maximum amount of Gaussian blur to apply to the degraded low-resolution image. |
+| --min_gaussian_noise | 0.0 | float | The minimum amount of Gaussian noise to add to the degraded low-resolution image. |
+| --max_gaussian_noise | 0.1 | float | The maximum amount of Gaussian noise to add to the degraded low-resolution image. |
+| --min_compression | 0.0 | float | The minimum amount of JPEG compression to apply to the degraded low-resolution image. |
+| --max_compression | 0.8 | float | The maximum amount of JPEG compression to apply to the degraded low-resolution image. |
 | --brightness_jitter | 0.1 | float | The amount of jitter applied to the brightness of the training images. |
 | --contrast_jitter | 0.1 | float | The amount of jitter applied to the contrast of the training images. |
 | --saturation_jitter | 0.1 | float | The amount of jitter applied to the saturation of the training images. |
 | --hue_jitter | 0.1 | float | The amount of jitter applied to the hue of the training images. |
-| --batch_size | 16 | int | The number of training images to pass through the network at a time. |
-| --gradient_accumulation_steps | 8 | int | The number of batches to pass through the network before updating the model weights. |
+| --batch_size | 8 | int | The number of training images to pass through the network at a time. |
+| --gradient_accumulation_steps | 16 | int | The number of batches to pass through the network before updating the model weights. |
 | --upscaler_learning_rate | 1e-4 | float | The learning rate of the AdamW optimizer. |
 | --upscaler_max_gradient_norm | 1.0 | float | Clip gradients above this threshold norm before stepping. |
-| --critic_learning_rate | 2e-4 | float | The learning rate of the AdamW optimizer. |
-| --critic_max_gradient_norm | 2.0 | float | Clip gradients above this threshold norm before stepping. |
-| --num_epochs | 50 | int | The number of epochs to train for. |
-| --critic_warmup_epochs | 4 | int | Train the critic model for this many epochs before using it to train the upscaler. |
+| --critic_learning_rate | 5e-4 | float | The learning rate of the AdamW optimizer. |
+| --critic_max_gradient_norm | 5.0 | float | Clip gradients above this threshold norm before stepping. |
+| --num_epochs | 100 | int | The number of epochs to train for. |
+| --critic_warmup_epochs | 1 | int | Train the critic model for this many epochs before using it to train the upscaler. |
 | --critic_model_size | "small" | str | The size of the critic model. Choice of small, medium, and large. |
 | --activation_checkpointing | False | bool | Should we use activation checkpointing? This will drastically reduce memory utilization during training at the cost of recomputing the forward pass. |
-| --eval_interval | 1 | int | Evaluate the model after this many epochs on the testing set. |
+| --eval_interval | 2 | int | Evaluate the model after this many epochs on the testing set. |
 | --checkpoint_interval | 2 | int | Save the model checkpoint to disk every this many epochs. |
 | --checkpoint_path | "./checkpoints/checkpoint.pt" | str | The path to the base checkpoint file on disk. |
 | --resume | False | bool | Should we resume training from the last checkpoint? |
@@ -205,27 +217,36 @@ python fine-tune.py --base_checkpoint_path=./checkpoints/2X-100.pt --critic_mode
 | --device | "cpu" | str | The device to run the computation on. |
 | --seed | None | int | The seed for the random number generator. |
 
-## Upscaling
+## Test Comparison
 
-You can use the provided `upscale.py` script to generate upscaled images from the trained model at the default checkpoint like in the example below. In addition, you can create your own inferencing pipeline using the same model under the hood that leverages batch processing for large scale production systems.
+You can use the provided `test-compare.py` script to generate upscaled images from the trained model at the default checkpoint like in the example below.
 
 ```sh
-python upscale.py --image_path="./example.jpg"
+python test-compare.py --image_path="./example.jpg"
 ```
 
 To generate images using a different checkpoint you can use the `checkpoint_path` argument like in the example below.
 
 ```sh
-python upscale.py --checkpoint_path="./checkpoints/fine-tuned.pt" --image_path="./example.jpg"
+python test-compare.py --checkpoint_path="./checkpoints/fine-tuned.pt" --image_path="./example.jpg"
 ```
 
-### Upscaling Arguments
+You can adjust the level of enhancements applied to the image by setting the `gaussian_blur`, `gaussian_noise`, and `jpeg_compression` arguments like in the example below. Each value has been normalized such that 0 means no enhancement and 1 means full enhancement.
+
+```sh
+python test-compare.py --guassian_blur=0.5 --gaussian_noise=0.7 --jpeg_compression=0.9 --image_path="./example.jpg" 
+```
+
+### Test compare Arguments
 
 | Argument | Default | Type | Description |
 |---|---|---|---|
 | --image_path | None | str | The path to the image file to be upscaled by the model. |
 | --checkpoint_path | "./checkpoints/fine-tuned.pt" | str | The path to the base checkpoint file on disk. |
-| --device | "cuda" | str | The device to run the computation on. |
+| --gaussian_blur | 0.5 | float | The strength of gaussian blur removal from the image, between 0 and 1. |
+| --gaussian_noise | 0.5 | float | The strength of gaussian noise removal from the image, between 0 and 1. |
+| --jpeg_compression | 0.5 | float | The strength of JPEG compression artifact removal from the image, between 0 and 1. |
+| --device | "cpu" | str | The device to run the computation on. |
 
 ## References
 
@@ -238,3 +259,4 @@ python upscale.py --checkpoint_path="./checkpoints/fine-tuned.pt" --image_path="
 >- W. Shi, et al. Real-Time Single Image and Video Super-Resolution Using an Efficient Sub-Pixel Convolutional Neural Network, 2016.
 >- T. Salimans, et al. Weight Normalization: A Simple Reparameterization to Accelerate Training of Deep Neural Networks, OpenAI, 2016.
 >- T. Miyato, et al. Spectral Normalization for Generative Adversarial Networks, ICLR, 2018.
+>- E. Perez, et. al. FiLM: Visual Reasoning with a General Conditioning Layer, Association for the Advancement of Artificial Intelligence, 2018.

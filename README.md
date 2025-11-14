@@ -238,3 +238,4 @@ python upscale.py --checkpoint_path="./checkpoints/fine-tuned.pt" --image_path="
 >- W. Shi, et al. Real-Time Single Image and Video Super-Resolution Using an Efficient Sub-Pixel Convolutional Neural Network, 2016.
 >- T. Salimans, et al. Weight Normalization: A Simple Reparameterization to Accelerate Training of Deep Neural Networks, OpenAI, 2016.
 >- T. Miyato, et al. Spectral Normalization for Generative Adversarial Networks, ICLR, 2018.
+>- E. Perez, et. al. FiLM: Visual Reasoning with a General Conditioning Layer, Association for the Advancement of Artificial Intelligence, 2018.

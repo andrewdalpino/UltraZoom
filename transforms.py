@@ -4,6 +4,8 @@ from typing import Any
 
 import torch
 
+from torchvision import tv_tensors
+
 from torchvision.transforms.v2 import Transform
 from torchvision.transforms.v2.functional import gaussian_blur, gaussian_noise, jpeg
 
@@ -45,6 +47,35 @@ class GaussianBlur(Transform):
         return out, sigma
 
 
+class PoissonNoise(Transform):
+    """
+    A transform that adds Poisson-distributed noise to an image.
+    """
+
+    def __init__(self, min_scale: float, max_scale: float):
+
+        super().__init__()
+
+        self.min_scale = min_scale
+        self.max_scale = max_scale
+
+    def make_params(self, flat_inputs: list[Any]) -> dict[str, Any]:
+        scale = random.uniform(self.min_scale, self.max_scale)
+
+        return {"scale": scale}
+
+    def transform(self, x: Any, params: dict[str, Any]) -> Any:
+        scale = params["scale"]
+
+        out = torch.poisson(x * scale) / scale
+
+        out = torch.clamp(out, 0.0, 1.0)
+
+        out = tv_tensors.wrap(out, like=x)
+
+        return out, scale
+
+
 class GaussianNoise(Transform):
     """
     A transform that adds Gaussian-distributed noise to an image.
@@ -76,51 +107,6 @@ class GaussianNoise(Transform):
         sigma = params["sigma"]
 
         out = gaussian_noise(x, mean=0, sigma=sigma, clip=True)
-
-        return out, sigma
-
-
-class GreyNoise(Transform):
-    """
-    A transform that adds Gaussian-distributed grey noise to an image.
-    """
-
-    def __init__(self, min_sigma: float, max_sigma: float):
-        """
-        Args:
-            min_sigma (float): Minimum standard deviation of the Gaussian noise to be added.
-            max_sigma (float): Maximum standard deviation of the Gaussian noise to be added.
-        """
-
-        super().__init__()
-
-        assert min_sigma >= 0, f"Min sigma must be non-negative, {min_sigma} given."
-        assert max_sigma >= 0, f"Max sigma must be non-negative, {max_sigma} given."
-
-        assert max_sigma >= min_sigma, f"Max sigma must be greater than min sigma."
-
-        self.min_sigma = min_sigma
-        self.max_sigma = max_sigma
-
-    def make_params(self, flat_inputs: list[Any]) -> dict[str, Any]:
-        sigma = random.uniform(self.min_sigma, self.max_sigma)
-
-        return {"sigma": sigma}
-
-    def transform(self, x: Any, params: dict[str, Any]) -> Any:
-        c, h, w = x.shape
-
-        sigma = params["sigma"]
-
-        noise = torch.randn((1, h, w))
-
-        noise *= sigma
-
-        noise = noise.expand(c, -1, -1)
-
-        out = x + noise
-
-        out = torch.clamp(out, 0, 1)
 
         return out, sigma
 

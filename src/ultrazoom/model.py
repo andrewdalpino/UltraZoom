@@ -32,6 +32,8 @@ from torch.nn.utils.parametrize import (
 from torch.nn.utils.parametrizations import weight_norm, spectral_norm
 from torch.utils.checkpoint import checkpoint as torch_checkpoint
 
+from src.ultrazoom.control import ControlVector
+
 from huggingface_hub import PyTorchModelHubMixin
 
 
@@ -176,7 +178,7 @@ class Encoder(Module):
 
         assert num_layers > 0, "Number of layers must be greater than 0."
 
-        self.stem = Conv2d(3, num_channels, kernel_size=3, padding=1)
+        self.stem = Conv2d(3, num_channels, kernel_size=1)
 
         self.body = ModuleList(
             [
@@ -224,7 +226,7 @@ class EncoderBlock(Module):
     def __init__(self, num_channels: int, control_features: int, hidden_ratio: int):
         super().__init__()
 
-        self.stage1 = FiLMControl(num_channels, control_features)
+        self.stage1 = ChannelControl(num_channels, control_features)
         self.stage2 = SpatialAttention(num_channels)
         self.stage3 = InvertedBottleneck(num_channels, hidden_ratio)
 
@@ -246,8 +248,8 @@ class EncoderBlock(Module):
         return z
 
 
-class FiLMControl(Module):
-    """Feature-wise Linear Modulation (FiLM) layer for conditioning on a control vector."""
+class ChannelControl(Module):
+    """Channel-wise modulation layer for conditioning on a control vector."""
 
     def __init__(self, num_channels: int, control_features: int):
         super().__init__()
@@ -274,7 +276,7 @@ class FiLMControl(Module):
 
 
 class SpatialAttention(Module):
-    """A spatial attention module with large depth-wise convolutions."""
+    """A spatial attention module with large depth-wise separable convolutions."""
 
     def __init__(self, num_channels: int):
         super().__init__()
@@ -364,7 +366,7 @@ class InvertedBottleneck(Module):
 
 
 class SubpixelConv2d(Module):
-    """A high-resolution decoder using sub-pixel convolution."""
+    """A deconvolution layer utilizing sub-pixel convolution."""
 
     def __init__(self, in_channels: int, upscale_ratio: int):
         super().__init__()

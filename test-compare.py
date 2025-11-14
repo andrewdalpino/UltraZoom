@@ -12,6 +12,8 @@ from src.ultrazoom.model import UltraZoom
 
 import matplotlib.pyplot as plt
 
+from src.ultrazoom.control import ControlVector
+
 
 def main():
     parser = ArgumentParser(description="Super-resolution upscaling script")
@@ -20,9 +22,9 @@ def main():
     parser.add_argument(
         "--checkpoint_path", default="./checkpoints/checkpoint.pt", type=str
     )
-    parser.add_argument("--deblur", default="0.5", type=float)
-    parser.add_argument("--denoise", default="0.02", type=float)
-    parser.add_argument("--deartifact", default="0.2", type=float)
+    parser.add_argument("--gaussian_blur", default=0.5, type=float)
+    parser.add_argument("--gaussian_noise", default=0.5, type=float)
+    parser.add_argument("--jpeg_compression", default=0.5, type=float)
     parser.add_argument("--device", default="cpu", type=str)
 
     args = parser.parse_args()
@@ -59,7 +61,8 @@ def main():
     x = image_to_tensor(image).unsqueeze(0).to(args.device)
 
     c = (
-        torch.tensor([args.deblur, args.denoise, args.deartifact])
+        ControlVector(args.gaussian_blur, args.gaussian_noise, args.jpeg_compression)
+        .to_tensor()
         .unsqueeze(0)
         .to(args.device)
     )
@@ -83,11 +86,10 @@ def main():
     plt.imshow(grid)
     plt.show()
 
-    if "y" in input("Save upscaled image? (yes|no): ").lower():
+    if "y" in input("Save image? (yes|no): ").lower():
         filename = f"out_{time()}"
 
-        save_image(y_bicubic.squeeze(0), f"{filename}_bicubic.png")
-        save_image(y_pred.squeeze(0), f"{filename}_enhanced.png")
+        save_image(y_pred.squeeze(0), f"{filename}.png")
 
 
 if __name__ == "__main__":

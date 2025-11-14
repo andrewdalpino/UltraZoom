@@ -48,12 +48,12 @@ def main():
         choices=UltraZoom.AVAILABLE_UPSCALE_RATIOS,
     )
     parser.add_argument("--target_resolution", default=256, type=int)
-    parser.add_argument("--min_blur", default=0.0, type=float)
-    parser.add_argument("--max_blur", default=0.5, type=float)
-    parser.add_argument("--min_noise", default=0.0, type=float)
-    parser.add_argument("--max_noise", default=0.04, type=float)
+    parser.add_argument("--min_gaussian_blur", default=0.0, type=float)
+    parser.add_argument("--max_gaussian_blur", default=1.0, type=float)
+    parser.add_argument("--min_gaussian_noise", default=0.0, type=float)
+    parser.add_argument("--max_gaussian_noise", default=0.1, type=float)
     parser.add_argument("--min_compression", default=0.0, type=float)
-    parser.add_argument("--max_compression", default=0.3, type=float)
+    parser.add_argument("--max_compression", default=0.8, type=float)
     parser.add_argument("--brightness_jitter", default=0.1, type=float)
     parser.add_argument("--contrast_jitter", default=0.1, type=float)
     parser.add_argument("--saturation_jitter", default=0.1, type=float)
@@ -62,7 +62,7 @@ def main():
     parser.add_argument("--gradient_accumulation_steps", default=4, type=int)
     parser.add_argument("--num_epochs", default=100, type=int)
     parser.add_argument("--learning_rate", default=5e-4, type=float)
-    parser.add_argument("--max_gradient_norm", default=2.0, type=float)
+    parser.add_argument("--max_gradient_norm", default=5.0, type=float)
     parser.add_argument("--num_channels", default=48, type=int)
     parser.add_argument("--hidden_ratio", default=2, type=int)
     parser.add_argument("--num_encoder_layers", default=20, type=int)
@@ -126,10 +126,10 @@ def main():
         ControlMix,
         target_resolution=args.target_resolution,
         upscale_ratio=args.upscale_ratio,
-        min_blur=args.min_blur,
-        max_blur=args.max_blur,
-        min_noise=args.min_noise,
-        max_noise=args.max_noise,
+        min_gaussian_blur=args.min_gaussian_blur,
+        max_gaussian_blur=args.max_gaussian_blur,
+        min_gaussian_noise=args.min_gaussian_noise,
+        max_gaussian_noise=args.max_gaussian_noise,
         min_compression=args.min_compression,
         max_compression=args.max_compression,
     )
@@ -168,7 +168,7 @@ def main():
     model_args = {
         "upscale_ratio": args.upscale_ratio,
         "num_channels": args.num_channels,
-        "control_features": 3,
+        "control_features": training.control_features,
         "hidden_ratio": args.hidden_ratio,
         "num_encoder_layers": args.num_encoder_layers,
     }

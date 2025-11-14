@@ -45,25 +45,25 @@ def main():
     parser.add_argument("--train_images_path", default="./dataset/train", type=str)
     parser.add_argument("--test_images_path", default="./dataset/test", type=str)
     parser.add_argument("--num_dataset_processes", default=8, type=int)
-    parser.add_argument("--target_resolution", default=256, type=int)
-    parser.add_argument("--min_blur", default=0.0, type=float)
-    parser.add_argument("--max_blur", default=0.5, type=float)
-    parser.add_argument("--min_noise", default=0.0, type=float)
-    parser.add_argument("--max_noise", default=0.04, type=float)
+    parser.add_argument("--target_resolution", default=512, type=int)
+    parser.add_argument("--min_gaussian_blur", default=0.0, type=float)
+    parser.add_argument("--max_gaussian_blur", default=1.0, type=float)
+    parser.add_argument("--min_gaussian_noise", default=0.0, type=float)
+    parser.add_argument("--max_gaussian_noise", default=0.1, type=float)
     parser.add_argument("--min_compression", default=0.0, type=float)
-    parser.add_argument("--max_compression", default=0.3, type=float)
+    parser.add_argument("--max_compression", default=0.8, type=float)
     parser.add_argument("--brightness_jitter", default=0.1, type=float)
     parser.add_argument("--contrast_jitter", default=0.1, type=float)
     parser.add_argument("--saturation_jitter", default=0.1, type=float)
     parser.add_argument("--hue_jitter", default=0.1, type=float)
-    parser.add_argument("--batch_size", default=16, type=int)
-    parser.add_argument("--gradient_accumulation_steps", default=8, type=int)
+    parser.add_argument("--batch_size", default=8, type=int)
+    parser.add_argument("--gradient_accumulation_steps", default=16, type=int)
     parser.add_argument("--upscaler_learning_rate", default=1e-4, type=float)
     parser.add_argument("--upscaler_max_gradient_norm", default=1.0, type=float)
     parser.add_argument("--critic_learning_rate", default=5e-4, type=float)
-    parser.add_argument("--critic_max_gradient_norm", default=10.0, type=float)
+    parser.add_argument("--critic_max_gradient_norm", default=5.0, type=float)
     parser.add_argument("--num_epochs", default=100, type=int)
-    parser.add_argument("--critic_warmup_epochs", default=3, type=int)
+    parser.add_argument("--critic_warmup_epochs", default=1, type=int)
     parser.add_argument(
         "--critic_model_size", default="small", choices=Bouncer.AVAILABLE_MODEL_SIZES
     )
@@ -132,11 +132,11 @@ def main():
     new_dataset = partial(
         ControlMix,
         target_resolution=args.target_resolution,
-        upscale_ratio=args.upscale_ratio,
-        min_blur=args.min_blur,
-        max_blur=args.max_blur,
-        min_noise=args.min_noise,
-        max_noise=args.max_noise,
+        upscale_ratio=upscaler_args["upscale_ratio"],
+        min_gaussian_blur=args.min_gaussian_blur,
+        max_gaussian_blur=args.max_gaussian_blur,
+        min_gaussian_noise=args.min_gaussian_noise,
+        max_gaussian_noise=args.max_gaussian_noise,
         min_compression=args.min_compression,
         max_compression=args.max_compression,
     )

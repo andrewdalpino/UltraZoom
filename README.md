@@ -22,22 +22,64 @@ View at full resolution for best results. More comparisons can be found [here](h
 
 The following pretrained models are available on HuggingFace Hub.
 
-| Name | Zoom | Num Channels | Encoder Layers | Parameters | Library Version |
-|---|---|---|---|---|---|
-| [andrewdalpino/UltraZoom-2X-Ctrl](https://huggingface.co/andrewdalpino/UltraZoom-2X-Ctrl) | 2X | 48 | 20 | 1.8M | 0.2.x |
-| [andrewdalpino/UltraZoom-2X](https://huggingface.co/andrewdalpino/UltraZoom-2X) | 2X | 48 | 20 | 1.8M | 0.1.x |
-| [andrewdalpino/UltraZoom-3X](https://huggingface.co/andrewdalpino/UltraZoom-3X) | 3X | 54 | 30 | 3.5M | 0.1.x |
-| [andrewdalpino/UltraZoom-4X](https://huggingface.co/andrewdalpino/UltraZoom-4X) | 4X | 96 | 40 | 14M | 0.1.x |
+| Name | Zoom | Num Channels | Encoder Layers | Parameters | Control Modules | Library Version |
+|---|---|---|---|---|---|---|
+| [andrewdalpino/UltraZoom-2X-Ctrl](https://huggingface.co/andrewdalpino/UltraZoom-2X-Ctrl) | 2X | 48 | 20 | 1.8M | • | 0.2.x |
+| [andrewdalpino/UltraZoom-2X](https://huggingface.co/andrewdalpino/UltraZoom-2X) | 2X | 48 | 20 | 1.8M |  | 0.1.x |
+| [andrewdalpino/UltraZoom-3X](https://huggingface.co/andrewdalpino/UltraZoom-3X) | 3X | 54 | 30 | 3.5M |  | 0.1.x |
+| [andrewdalpino/UltraZoom-4X](https://huggingface.co/andrewdalpino/UltraZoom-4X) | 4X | 96 | 40 | 14M |  | 0.1.x |
 
-## Pretrained Example
+## Pretrained Examples
 
-If you'd just like to load the pretrained weights and do inference, getting started is as simple as in the example below. First, you'll need the `ultrazoom` and `torchvision` Python packages installed into your project.
+If you'd just like to load the pretrained weights and do inference, getting started is as simple as in the examples below.
+
+### Non-control Version
+
+First, you'll need the `ultrazoom` package installed into your project. For the non-control version we'll need library version `0.1.x` to load the pretrained weights. We'll also need the `torchvision` library to do some basic image preprocessing. We recommend using a virtual environment to make package management easier.
 
 ```sh
-pip install ultrazoom torchvision
+pip install ultrazoom~=0.1.0 torchvision
 ```
 
-Next, load the model weights from HuggingFace Hub and feed the network some images. Note that the input to the `upscale()` method is a normalized (between 0 and 1) 4D tensor with shape [b, 3, w, h] where b is the batch dimension, and w and height are the width and height respectively. The input images should be in RGB format with exactly 3 channels.
+Then, load the weights from HuggingFace Hub, convert the input image to a tensor, and upscale the image.
+
+```python
+import torch
+
+from torchvision.io import decode_image, ImageReadMode
+from torchvision.transforms.v2 import ToDtype, ToPILImage
+
+from ultrazoom.model import UltraZoom
+
+
+model_name = "andrewdalpino/UltraZoom-2X"
+image_path = "./dataset/bird.png"
+
+model = UltraZoom.from_pretrained(model_name)
+
+image_to_tensor = ToDtype(torch.float32, scale=True)
+tensor_to_pil = ToPILImage()
+
+image = decode_image(image_path, mode=ImageReadMode.RGB)
+
+x = image_to_tensor(image).unsqueeze(0)
+
+y_pred = model.upscale(x)
+
+pil_image = tensor_to_pil(y_pred.squeeze(0))
+
+pil_image.show()
+```
+
+### Control Version
+
+The control version of Ultra Zoom allows you to independently adjust the level of deblurring, denoising, and deartifacting applied to the upscaled image. We accomplish this by conditioning the input image on a Control Vector that gets picked up by control modules embedded into each layer of the encoder. Version `0.2.x` of the library is required for control functionality.
+
+```sh
+pip install ultrazoom~=0.2.0 torchvision
+```
+
+The `ControlVector` class takes 3 arguments - `gaussian_blur`, `gaussian_noise`, and `jpeg_compression` corresponding to the assumed level of each type of degradation present in the input image. For example, you may want to apply stronger enhancements to an old photo and weaker enhancements to AI-generated images.
 
 ```python
 import torch
@@ -49,7 +91,7 @@ from ultrazoom.model import UltraZoom
 from ultrazoom.control import ControlVector
 
 
-model_name = "andrewdalpino/UltraZoom-V2-2X-Ctrl"
+model_name = "andrewdalpino/UltraZoom-2X-Ctrl"
 image_path = "./dataset/bird.png"
 
 model = UltraZoom.from_pretrained(model_name)
@@ -63,8 +105,8 @@ x = image_to_tensor(image).unsqueeze(0)
 
 c = ControlVector(
     gaussian_blur=0.5,
-    gaussian_noise=0.5,
-    jpeg_compression=0.5
+    gaussian_noise=0.6,
+    jpeg_compression=0.7
 ).to_tensor()
 
 y_pred = model.upscale(x, c)
@@ -74,7 +116,9 @@ pil_image = tensor_to_pil(y_pred.squeeze(0))
 pil_image.show()
 ```
 
-## Clone the Repository
+## Training
+
+### Clone the Repository
 
 You'll need the code in the repository to train new models and export them for production.
 
@@ -82,7 +126,7 @@ You'll need the code in the repository to train new models and export them for p
 git clone https://github.com/andrewdalpino/UltraZoom
 ```
 
-## Install Project Dependencies
+### Install Project Dependencies
 
 Project dependencies are specified in the `requirements.txt` file. You can install them with [pip](https://pip.pypa.io/en/stable/) using the following command from the project root. We recommend using a virtual environment such as `venv` to keep package dependencies on your system tidy.
 
@@ -94,7 +138,7 @@ source ./.venv/bin/activate
 pip install -r requirements.txt
 ```
 
-## Pretraining
+### Pretraining
 
 Ultra Zoom is trained in two stages. The first stage focuses on building a foundation model for fine-tuning. It aims to jointly minimize the Pixel Loss with high and low frequency perceptual losses from the perspective of a pretrained VGG19 image classifier. To start training with the default settings, add your training and testing images to the `./dataset/train` and `./dataset/test` folders respectively and call the pretraining script like in the example below. If you are looking for good training sets to start with we recommend the `DIV2K` and/or `Flicker2K` datasets.
 
@@ -120,7 +164,7 @@ In addition, you can control various training data augmentation arguments such a
 python pretrain.py --brightness_jitter=0.5 --contrast_jitter=0.4 --hue_jitter=0.3 --saturation_jitter=0.2
 ```
 
-### Training Dashboard
+#### Training Dashboard
 
 We use [TensorBoard](https://www.tensorflow.org/tensorboard) to capture and display training events such as loss and gradient norm updates. To launch the dashboard server run the following command from the terminal.
 
@@ -130,7 +174,7 @@ tensorboard --logdir=./runs
 
 Then navigate to the dashboard using your favorite web browser.
 
-### Pretraining Arguments
+#### Pretraining Arguments
 
 | Argument | Default | Type | Description |
 |---|---|---|---|
@@ -166,7 +210,7 @@ Then navigate to the dashboard using your favorite web browser.
 | --device | "cpu" | str | The device to run the computation on. |
 | --seed | None | int | The seed for the random number generator. |
 
-## Fine-tuning
+### Fine-tuning
 
 This next stage focuses on squeezing extra performance out of the model using an adversarial training framework. Step 2 of training takes the pretrained checkpoint and fine-tunes the model using feedback from an adversarial critic model. The critic is specially optimized to detect slight differences between real images and images generated by Ultra Zoom. It uses feedback from the upscaler to improve its detection rate and in turn the upscaler uses feedback from the critic to improve its fool rate. This stage can be considered fully optimized when the critic can no longer reliably detect fake images i.e. the F1 score is pegged near 0.5. To start fine-tuning your pretrained checkpoint see the example below.
 
@@ -180,7 +224,7 @@ To adjust the size of the critic model use the `critic_model_size` argument.
 python fine-tune.py --base_checkpoint_path="./checkpoints/2X-100.pt" --critic_model_size=medium
 ```
 
-### Fine-tuning Arguments
+#### Fine-tuning Arguments
 
 | Argument | Default | Type | Description |
 |---|---|---|---|
@@ -217,7 +261,7 @@ python fine-tune.py --base_checkpoint_path="./checkpoints/2X-100.pt" --critic_mo
 | --device | "cpu" | str | The device to run the computation on. |
 | --seed | None | int | The seed for the random number generator. |
 
-## Test Comparison
+### Test Comparison
 
 You can use the provided `test-compare.py` script to generate upscaled images from the trained model at the default checkpoint like in the example below.
 
@@ -237,7 +281,7 @@ You can adjust the level of enhancements applied to the image by setting the `ga
 python test-compare.py --guassian_blur=0.5 --gaussian_noise=0.7 --jpeg_compression=0.9 --image_path="./example.jpg" 
 ```
 
-### Test compare Arguments
+#### Test compare Arguments
 
 | Argument | Default | Type | Description |
 |---|---|---|---|

@@ -22,7 +22,7 @@ View at full resolution for best results. More comparisons can be found [here](h
 
 The following pretrained models are available on HuggingFace Hub.
 
-| Name | Zoom | Num Channels | Encoder Layers | Parameters | Control Modules | Library Version |
+| Name | Upscale | Num Channels | Encoder Layers | Parameters | Control Modules | Library Version |
 |---|---|---|---|---|---|---|
 | [andrewdalpino/UltraZoom-2X-Ctrl](https://huggingface.co/andrewdalpino/UltraZoom-2X-Ctrl) | 2X | 48 | 20 | 1.8M | Yes | 0.2.x |
 | [andrewdalpino/UltraZoom-2X](https://huggingface.co/andrewdalpino/UltraZoom-2X) | 2X | 48 | 20 | 1.8M | No | 0.1.x |
@@ -79,7 +79,7 @@ The control version of Ultra Zoom allows you to independently adjust the level o
 pip install ultrazoom~=0.2.0 torchvision
 ```
 
-The `ControlVector` class takes 3 arguments - `gaussian_blur`, `gaussian_noise`, and `jpeg_compression` corresponding to the assumed level of each type of degradation present in the input image. For example, you may want to apply stronger enhancements to an old photo and weaker enhancements to AI-generated images.
+The `ControlVector` class takes 3 arguments - `gaussian_blur`, `gaussian_noise`, and `jpeg_compression` corresponding to the assumed level of each type of degradation present in the input image. Their values range from 0.0 meaning no degradation is assumed present to 1.0 meaning that the maximum amount of degradation is assumed present.
 
 ```python
 import torch
@@ -104,9 +104,9 @@ image = decode_image(image_path, mode=ImageReadMode.RGB)
 x = image_to_tensor(image).unsqueeze(0)
 
 c = ControlVector(
-    gaussian_blur=0.5,
-    gaussian_noise=0.6,
-    jpeg_compression=0.7
+    gaussian_blur=0.5,      # Higher values indicate more degradation
+    gaussian_noise=0.6,     # which increases the strength of the
+    jpeg_compression=0.7    # enhancement.
 ).to_tensor()
 
 y_pred = model.upscale(x, c)

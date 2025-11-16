@@ -70,7 +70,7 @@ def main():
 
     print("Model checkpoint loaded successfully")
 
-    c = (
+    c_hat = (
         ControlVector(
             args.gaussian_blur,
             args.gaussian_noise,
@@ -90,7 +90,7 @@ def main():
 
     for x, y in tqdm(dataloader, desc="Testing", leave=False):
         x = x.to(args.device, non_blocking=True)
-        c = c.repeat(x.size(0), 1)
+        c = c_hat.repeat(x.size(0), 1)
         y = y.to(args.device, non_blocking=True)
 
         u_pred, u_bicubic = model.test_compare(x, c)

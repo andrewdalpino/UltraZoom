@@ -109,19 +109,19 @@ class ControlMix(Dataset):
 
         to_tensor_transform = ToDtype(torch.float32, scale=True)
 
-        self.pre_transform = pre_transform
-        self.blur_transform = blur_transform
-        self.gaussian_noise_transform = gaussian_noise_transform
-        self.resize_transform = resize_transform
-        self.compression_transform = compression_transform
-        self.to_tensor_transform = to_tensor_transform
-        self.image_paths = image_paths
         self.min_gaussian_blur = min_gaussian_blur
         self.max_gaussian_blur = max_gaussian_blur
         self.min_gaussian_noise = min_gaussian_noise
         self.max_gaussian_noise = max_gaussian_noise
         self.min_compression = min_compression
         self.max_compression = max_compression
+        self.image_paths = image_paths
+        self.pre_transform = pre_transform
+        self.blur_transform = blur_transform
+        self.gaussian_noise_transform = gaussian_noise_transform
+        self.resize_transform = resize_transform
+        self.compression_transform = compression_transform
+        self.to_tensor_transform = to_tensor_transform
 
     @property
     def control_features(self) -> int:
@@ -171,3 +171,57 @@ class ControlMix(Dataset):
 
     def __len__(self):
         return len(self.image_paths)
+
+
+class ImagePairs(Dataset):
+    """
+    A dataset consisting of paired LR and HR images with the same name but in
+    separate folders.
+    """
+
+    ALLOWED_EXTENSIONS = frozenset({".png", ".jpg", ".jpeg", ".webp", ".gif"})
+
+    IMAGE_MODE = "RGB"
+
+    def __init__(self, lr_root_path: str, hr_root_path: str):
+        lr_image_paths = []
+        hr_image_paths = []
+
+        batch = [
+            (lr_root_path, lr_image_paths),
+            (hr_root_path, hr_image_paths),
+        ]
+
+        for root_path, image_paths in batch:
+            for folder_path, _, filenames in walk(root_path):
+                for filename in filenames:
+                    if self.has_image_extension(filename):
+                        image_path = path.join(folder_path, filename)
+
+                        image_paths.append(image_path)
+
+        self.lr_image_paths = lr_image_paths
+        self.hr_image_paths = hr_image_paths
+
+        self.transformer = ToDtype(torch.float32, scale=True)
+
+    @classmethod
+    def has_image_extension(cls, filename: str) -> bool:
+        _, extension = path.splitext(filename)
+
+        return extension in cls.ALLOWED_EXTENSIONS
+
+    def __getitem__(self, index: int) -> tuple[Tensor, Tensor]:
+        lr_image_path = self.lr_image_paths[index]
+        hr_image_path = self.hr_image_paths[index]
+
+        lr_image = decode_image(lr_image_path, mode=self.IMAGE_MODE)
+        hr_image = decode_image(hr_image_path, mode=self.IMAGE_MODE)
+
+        x = self.transformer(lr_image)
+        y = self.transformer(hr_image)
+
+        return x, y
+
+    def __len__(self):
+        return len(self.lr_image_paths)

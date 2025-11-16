@@ -32,8 +32,6 @@ from torch.nn.utils.parametrize import (
 from torch.nn.utils.parametrizations import weight_norm, spectral_norm
 from torch.utils.checkpoint import checkpoint as torch_checkpoint
 
-from src.ultrazoom.control import ControlVector
-
 from huggingface_hub import PyTorchModelHubMixin
 
 
@@ -75,6 +73,7 @@ class UltraZoom(Module, PyTorchModelHubMixin):
         self.decoder = SubpixelConv2d(num_channels, upscale_ratio)
 
         self.upscale_ratio = upscale_ratio
+        self.control_features = control_features
 
     @property
     def num_params(self) -> int:
@@ -91,6 +90,14 @@ class UltraZoom(Module, PyTorchModelHubMixin):
 
         for param in self.parameters():
             param.requires_grad = False
+
+    def unfreeze_control_modules(self) -> None:
+        """Unfreeze all control modules to allow them to be updated during training."""
+
+        for module in self.modules():
+            if isinstance(module, ChannelControl):
+                for param in module.parameters():
+                    param.requires_grad = True
 
     def add_weight_norms(self) -> None:
         """Add weight normalization parameterization to the network."""
@@ -117,9 +124,14 @@ class UltraZoom(Module, PyTorchModelHubMixin):
     def forward(self, x: Tensor, c: Tensor) -> tuple[Tensor, Tensor]:
         """
         Args:
-            x: Input image tensor of shape (B, C, H, W).
-            c: Control vector.
+            x: Input image tensor of shape (B, 3, H, W).
+            c: Control vectors with shape (B, 3).
         """
+
+        assert c.shape == (x.size(0), self.control_features), (
+            f"Control vector must have shape {(x.size(0), self.control_features)}, "
+            f"{c.shape} given."
+        )
 
         s = self.bicubic.forward(x)
 
@@ -133,11 +145,7 @@ class UltraZoom(Module, PyTorchModelHubMixin):
     @torch.inference_mode()
     def upscale(self, x: Tensor, c: Tensor) -> Tensor:
         """
-        Zoom and enhance the input image.
-
-        Args:
-            x: Input image tensor of shape (B, C, H, W).
-            c: Control vector.
+        Convenience method for upscaling an image tensor with clamping.
         """
 
         z, _ = self.forward(x, c)
@@ -150,10 +158,6 @@ class UltraZoom(Module, PyTorchModelHubMixin):
     def test_compare(self, x: Tensor, c: Tensor) -> tuple[Tensor, Tensor]:
         """
         Return both the zoomed and enhanced images for comparison.
-
-        Args:
-            x: Input image tensor of shape (B, C, H, W).
-            c: Control vector.
         """
 
         z, s = self.forward(x, c)

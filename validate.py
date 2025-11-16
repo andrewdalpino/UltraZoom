@@ -6,15 +6,16 @@ import torch
 
 from torch.utils.data import DataLoader
 
-from data import ImagePairs
-
-from src.ultrazoom.model import UltraZoom
-
 from torchmetrics.image import (
     PeakSignalNoiseRatio,
     StructuralSimilarityIndexMeasure,
     VisualInformationFidelity,
 )
+
+from src.ultrazoom.model import UltraZoom
+from src.ultrazoom.control import ControlVector
+
+from data import ImagePairs
 
 from tqdm import tqdm
 
@@ -27,12 +28,11 @@ def main():
     parser.add_argument(
         "--checkpoint_path", default="./checkpoints/checkpoint.pt", type=str
     )
-    parser.add_argument(
-        "--lr_images_path", default="./dataset/validate/Set14/LRbicx2", type=str
-    )
-    parser.add_argument(
-        "--hr_images_path", default="./dataset/validate/Set14/GTmod12", type=str
-    )
+    parser.add_argument("--lr_images_path", default="./dataset/validate/lr", type=str)
+    parser.add_argument("--hr_images_path", default="./dataset/validate/hr", type=str)
+    parser.add_argument("--gaussian_blur", default=0.1, type=float)
+    parser.add_argument("--gaussian_noise", default=0.1, type=float)
+    parser.add_argument("--jpeg_compression", default=0.1, type=float)
     parser.add_argument("--device", default="cpu", type=str)
 
     args = parser.parse_args()
@@ -70,6 +70,16 @@ def main():
 
     print("Model checkpoint loaded successfully")
 
+    c = (
+        ControlVector(
+            args.gaussian_blur,
+            args.gaussian_noise,
+            args.jpeg_compression,
+        )
+        .to_tensor()
+        .to(args.device)
+    )
+
     bicubic_psnr_metric = PeakSignalNoiseRatio(data_range=1.0).to(args.device)
     bicubic_ssim_metric = StructuralSimilarityIndexMeasure().to(args.device)
     bicubic_vif_metric = VisualInformationFidelity().to(args.device)
@@ -80,9 +90,10 @@ def main():
 
     for x, y in tqdm(dataloader, desc="Testing", leave=False):
         x = x.to(args.device, non_blocking=True)
+        c = c.repeat(x.size(0), 1)
         y = y.to(args.device, non_blocking=True)
 
-        u_pred, u_bicubic = model.test_compare(x)
+        u_pred, u_bicubic = model.test_compare(x, c)
 
         bicubic_psnr_metric.update(u_bicubic, y)
         bicubic_ssim_metric.update(u_bicubic, y)

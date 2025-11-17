@@ -599,12 +599,12 @@ class Detector(Module):
             num_quaternary_layers > 0
         ), "Number of quaternary layers must be greater than 0."
 
-        stage1 = Sequential(
-            PixelCrush(3, num_primary_channels, 2),
+        self.stage1 = Sequential(
+            PixelCrush(3, num_primary_channels, 1),
             *[DetectorBlock(num_primary_channels) for _ in range(num_primary_layers)],
         )
 
-        stage2 = Sequential(
+        self.stage2 = Sequential(
             PixelCrush(num_primary_channels, num_secondary_channels, 2),
             *[
                 DetectorBlock(num_secondary_channels)
@@ -612,12 +612,12 @@ class Detector(Module):
             ],
         )
 
-        stage3 = Sequential(
+        self.stage3 = Sequential(
             PixelCrush(num_secondary_channels, num_tertiary_channels, 2),
             *[DetectorBlock(num_tertiary_channels) for _ in range(num_tertiary_layers)],
         )
 
-        stage4 = Sequential(
+        self.stage4 = Sequential(
             PixelCrush(num_tertiary_channels, num_quaternary_channels, 2),
             *[
                 DetectorBlock(num_quaternary_channels)
@@ -626,11 +626,6 @@ class Detector(Module):
         )
 
         self.checkpoint = lambda layer, x: layer(x)
-
-        self.stage1 = stage1
-        self.stage2 = stage2
-        self.stage3 = stage3
-        self.stage4 = stage4
 
     def add_spectral_norms(self) -> None:
         for layer in self.stage1:
@@ -678,6 +673,9 @@ class PixelCrush(Module):
         self.conv = Conv2d(
             in_channels, out_channels, kernel_size=crush_factor, stride=crush_factor
         )
+
+    def add_weight_norms(self) -> None:
+        self.conv = weight_norm(self.conv)
 
     def add_spectral_norms(self) -> None:
         self.conv = spectral_norm(self.conv)

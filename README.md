@@ -10,13 +10,21 @@ A fast single image super-resolution (SISR) model for upscaling images with ultr
 
 - **Full RGB**: Unlike many efficient SR models that only operate in the luminance domain, Ultra Zoom operates within the full RGB color domain enhancing both luminance and chrominance for the best possible image quality.
 
-## Demo
+## Demos
 
 View at full resolution for best results. More comparisons can be found [here](https://github.com/andrewdalpino/UltraZoom/tree/master/docs/images).
 
 ![UltraZoom 2X Comparison](https://raw.githubusercontent.com/andrewdalpino/UltraZoom/master/docs/images/cat-2x-comparison.png)
 ![UltraZoom 3X Comparison](https://raw.githubusercontent.com/andrewdalpino/UltraZoom/master/docs/images/building-3x-comparison.png)
 ![UltraZoom 4X Comparison](https://raw.githubusercontent.com/andrewdalpino/UltraZoom/master/docs/images/flower-4x-comparison.png)
+
+This comparison demonstrates the strength of the enhancements (deblurring, denoising, and deartifacting) applied to the upscaled image.
+
+![UltraZoom Ctrl Enhancement Comparison](https://raw.githubusercontent.com/andrewdalpino/UltraZoom/master/docs/images/ctrl-compare-all-3.png)
+
+This comparison demonstrates the individual enhancements applied in isolation.
+
+![UltraZoom Ctrl Enhancement Comparison](https://raw.githubusercontent.com/andrewdalpino/UltraZoom/master/docs/images/ctrl-compare-individual.png)
 
 ## Pretrained Models
 

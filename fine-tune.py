@@ -63,7 +63,7 @@ def main():
     parser.add_argument("--critic_learning_rate", default=5e-4, type=float)
     parser.add_argument("--critic_max_gradient_norm", default=5.0, type=float)
     parser.add_argument("--num_epochs", default=100, type=int)
-    parser.add_argument("--critic_warmup_epochs", default=1, type=int)
+    parser.add_argument("--critic_warmup_epochs", default=2, type=int)
     parser.add_argument(
         "--critic_model_size", default="small", choices=Bouncer.AVAILABLE_MODEL_SIZES
     )

@@ -61,15 +61,23 @@ def main():
     x = image_to_tensor(image).unsqueeze(0).to(args.device)
 
     c = (
-        ControlVector(args.gaussian_blur, args.gaussian_noise, args.jpeg_compression)
+        ControlVector(
+            gaussian_blur=args.gaussian_blur,
+            gaussian_noise=args.gaussian_noise,
+            jpeg_compression=args.jpeg_compression,
+        )
         .to_tensor()
-        .unsqueeze(0)
         .to(args.device)
+        .unsqueeze(0)
     )
 
     print("Upscaling ...")
 
-    y_pred, y_bicubic = model.test_compare(x, c)
+    with torch.inference_mode():
+        y_pred, y_bicubic = model.forward(x, c)
+
+    y_pred = torch.clamp(y_pred, 0, 1)
+    y_bicubic = torch.clamp(y_bicubic, 0, 1)
 
     pair = torch.stack(
         [

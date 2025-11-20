@@ -32,6 +32,8 @@ from torch.nn.utils.parametrize import (
 from torch.nn.utils.parametrizations import weight_norm, spectral_norm
 from torch.utils.checkpoint import checkpoint as torch_checkpoint
 
+from src.ultrazoom.control import ControlVector
+
 from huggingface_hub import PyTorchModelHubMixin
 
 
@@ -128,10 +130,13 @@ class UltraZoom(Module, PyTorchModelHubMixin):
             c: Control vectors with shape (B, 3).
         """
 
-        assert c.shape == (x.size(0), self.control_features), (
-            f"Control vector must have shape {(x.size(0), self.control_features)}, "
-            f"{c.shape} given."
-        )
+        assert x.size(0) == c.size(
+            0
+        ), "Batch size of input image and control vector must be the same."
+
+        assert (
+            c.size(1) == self.control_features
+        ), f"Control vector must have exactly {self.control_features} elements."
 
         s = self.bicubic.forward(x)
 
@@ -143,29 +148,29 @@ class UltraZoom(Module, PyTorchModelHubMixin):
         return z, s
 
     @torch.inference_mode()
-    def upscale(self, x: Tensor, c: Tensor) -> Tensor:
+    def upscale(self, x: Tensor, c: Tensor | None) -> Tensor:
         """
-        Convenience method for upscaling an image tensor with clamping.
+        Convenience method for inference.
+
+        Args:
+            x: Input image tensor of shape (B, 3, H, W).
+            c: Control vectors with shape (B, 3).
         """
+
+        if c is None:
+            c = (
+                ControlVector.default()
+                .to_tensor()
+                .to(x.device)
+                .unsqueeze(0)
+                .repeat(x.size(0), 1)
+            )
 
         z, _ = self.forward(x, c)
 
         z = torch.clamp(z, 0, 1)
 
         return z
-
-    @torch.inference_mode()
-    def test_compare(self, x: Tensor, c: Tensor) -> tuple[Tensor, Tensor]:
-        """
-        Return both the zoomed and enhanced images for comparison.
-        """
-
-        z, s = self.forward(x, c)
-
-        z = torch.clamp(z, 0, 1)
-        s = torch.clamp(s, 0, 1)
-
-        return z, s
 
 
 class Encoder(Module):
@@ -405,6 +410,24 @@ class SubpixelConv2d(Module):
         return z
 
 
+class ONNXModel(Module):
+    """A wrapper class for exporting to ONNX format."""
+
+    def __init__(self, model: UltraZoom):
+        super().__init__()
+
+        self.model = model
+
+    def forward(self, x: Tensor, c: Tensor | None) -> Tensor:
+        """
+        Args:
+            x: Input image tensor of shape (B, 3, H, W).
+            c: Control vectors with shape (B, 3).
+        """
+
+        return self.model.upscale(x, c)
+
+
 class ChannelLoRA(Module):
     """Low rank channel decomposition transformation."""
 
@@ -437,18 +460,6 @@ class ChannelLoRA(Module):
         return z
 
 
-class ONNXModel(Module):
-    """A wrapper class for exporting to ONNX format."""
-
-    def __init__(self, model: UltraZoom):
-        super().__init__()
-
-        self.model = model
-
-    def forward(self, x: Tensor, c: Tensor) -> Tensor:
-        return self.model.upscale(x, c)
-
-
 class Bouncer(Module):
     """A critic network for detecting real and fake images for adversarial training."""
 
@@ -456,7 +467,7 @@ class Bouncer(Module):
 
     @classmethod
     def from_preconfigured(cls, model_size: str) -> Self:
-        """Return a new preconfigured model."""
+        """Return a new pre-configured model."""
 
         assert model_size in cls.AVAILABLE_MODEL_SIZES, "Invalid model size."
 
@@ -469,13 +480,13 @@ class Bouncer(Module):
                 num_secondary_channels = 128
                 num_secondary_layers = 3
                 num_tertiary_channels = 256
-                num_tertiary_layers = 12
+                num_tertiary_layers = 9
                 num_quaternary_channels = 512
 
             case "medium":
                 num_primary_channels = 96
                 num_secondary_channels = 192
-                num_secondary_layers = 6
+                num_secondary_layers = 3
                 num_tertiary_channels = 384
                 num_tertiary_layers = 24
                 num_quaternary_channels = 768
@@ -483,7 +494,7 @@ class Bouncer(Module):
             case "large":
                 num_primary_channels = 128
                 num_secondary_channels = 256
-                num_secondary_layers = 9
+                num_secondary_layers = 6
                 num_tertiary_channels = 512
                 num_tertiary_layers = 36
                 num_quaternary_channels = 1024
@@ -553,14 +564,13 @@ class Bouncer(Module):
 
         z5 = self.pool.forward(z4)
         z5 = self.flatten.forward(z5)
-
         z5 = self.classifier.forward(z5)
 
         return z1, z2, z3, z4, z5
 
     @torch.no_grad()
     def predict(self, x: Tensor) -> Tensor:
-        """Return the probability that the input image is real."""
+        """Return the probability that the input image is real or fake."""
 
         _, _, _, _, z5 = self.forward(x)
 
@@ -599,28 +609,38 @@ class Detector(Module):
             num_quaternary_layers > 0
         ), "Number of quaternary layers must be greater than 0."
 
+        self.downsample1 = PixelCrush(3, num_primary_channels, 2)
+
         self.stage1 = Sequential(
-            PixelCrush(3, num_primary_channels, 1),
-            *[DetectorBlock(num_primary_channels) for _ in range(num_primary_layers)],
+            *[
+                DetectorBlock(num_primary_channels, 4)
+                for _ in range(num_primary_layers)
+            ],
         )
 
+        self.downsample2 = PixelCrush(num_primary_channels, num_secondary_channels, 2)
+
         self.stage2 = Sequential(
-            PixelCrush(num_primary_channels, num_secondary_channels, 2),
             *[
-                DetectorBlock(num_secondary_channels)
+                DetectorBlock(num_secondary_channels, 4)
                 for _ in range(num_secondary_layers)
             ],
         )
 
+        self.downsample3 = PixelCrush(num_secondary_channels, num_tertiary_channels, 2)
+
         self.stage3 = Sequential(
-            PixelCrush(num_secondary_channels, num_tertiary_channels, 2),
-            *[DetectorBlock(num_tertiary_channels) for _ in range(num_tertiary_layers)],
+            *[
+                DetectorBlock(num_tertiary_channels, 4)
+                for _ in range(num_tertiary_layers)
+            ],
         )
 
+        self.downsample4 = PixelCrush(num_tertiary_channels, num_quaternary_channels, 2)
+
         self.stage4 = Sequential(
-            PixelCrush(num_tertiary_channels, num_quaternary_channels, 2),
             *[
-                DetectorBlock(num_quaternary_channels)
+                DetectorBlock(num_quaternary_channels, 4)
                 for _ in range(num_quaternary_layers)
             ],
         )
@@ -628,6 +648,11 @@ class Detector(Module):
         self.checkpoint = lambda layer, x: layer(x)
 
     def add_spectral_norms(self) -> None:
+        self.downsample1.add_spectral_norms()
+        self.downsample2.add_spectral_norms()
+        self.downsample3.add_spectral_norms()
+        self.downsample4.add_spectral_norms()
+
         for layer in self.stage1:
             layer.add_spectral_norms()
 
@@ -649,10 +674,17 @@ class Detector(Module):
         self.checkpoint = partial(torch_checkpoint, use_reentrant=False)
 
     def forward(self, x: Tensor) -> tuple[Tensor, ...]:
-        z1 = self.checkpoint(self.stage1.forward, x)
-        z2 = self.checkpoint(self.stage2.forward, z1)
-        z3 = self.checkpoint(self.stage3.forward, z2)
-        z4 = self.checkpoint(self.stage4.forward, z3)
+        z1 = self.downsample1.forward(x)
+        z1 = self.checkpoint(self.stage1.forward, z1)
+
+        z2 = self.downsample2.forward(z1)
+        z2 = self.checkpoint(self.stage2.forward, z2)
+
+        z3 = self.downsample3.forward(z2)
+        z3 = self.checkpoint(self.stage3.forward, z3)
+
+        z4 = self.downsample4.forward(z3)
+        z4 = self.checkpoint(self.stage4.forward, z4)
 
         return z1, z2, z3, z4
 
@@ -671,11 +703,12 @@ class PixelCrush(Module):
         }, "Crush factor must be either 1, 2, 3, or 4."
 
         self.conv = Conv2d(
-            in_channels, out_channels, kernel_size=crush_factor, stride=crush_factor
+            in_channels,
+            out_channels,
+            kernel_size=crush_factor,
+            stride=crush_factor,
+            bias=False,
         )
-
-    def add_weight_norms(self) -> None:
-        self.conv = weight_norm(self.conv)
 
     def add_spectral_norms(self) -> None:
         self.conv = spectral_norm(self.conv)
@@ -687,12 +720,13 @@ class PixelCrush(Module):
 class DetectorBlock(Module):
     """A detector block with depth-wise separable convolution and residual connection."""
 
-    def __init__(self, num_channels: int):
+    def __init__(self, num_channels: int, hidden_ratio: int):
         super().__init__()
 
         assert num_channels > 0, "Number of channels must be greater than 0."
+        assert hidden_ratio in {1, 2, 4}, "Hidden ratio must be either 1, 2, or 4."
 
-        hidden_channels = 4 * num_channels
+        hidden_channels = hidden_ratio * num_channels
 
         self.conv1 = Conv2d(
             num_channels,

@@ -72,12 +72,13 @@ def main():
 
     c_hat = (
         ControlVector(
-            args.gaussian_blur,
-            args.gaussian_noise,
-            args.jpeg_compression,
+            gaussian_blur=args.gaussian_blur,
+            gaussian_noise=args.gaussian_noise,
+            jpeg_compression=args.jpeg_compression,
         )
         .to_tensor()
         .to(args.device)
+        .unsqueeze(0)
     )
 
     bicubic_psnr_metric = PeakSignalNoiseRatio(data_range=1.0).to(args.device)

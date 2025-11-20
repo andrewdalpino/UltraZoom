@@ -114,7 +114,7 @@ x = image_to_tensor(image).unsqueeze(0)
 c = ControlVector(
     gaussian_blur=0.5,      # Higher values indicate more degradation
     gaussian_noise=0.6,     # which increases the strength of the
-    jpeg_compression=0.7    # enhancement.
+    jpeg_compression=0.7    # enhancement [0, 1].
 ).to_tensor()
 
 y_pred = model.upscale(x, c)
@@ -302,7 +302,6 @@ python test-compare.py --guassian_blur=0.5 --gaussian_noise=0.7 --jpeg_compressi
 
 ## References
 
->- S. Park, et. al. NeXtSRGAN: enhancing super-resolution GAN with ConvNeXt discriminator for superior realism, The Visual Computer, 2025.
 >- J. Song, et. al Gram-GAN: Image Super-Resolution Based on Gram Matrix and Discriminator Perceptual Loss, Sensors, 2023.
 >- Z. Liu, et al. A ConvNet for the 2020s, 2022.
 >- A. Jolicoeur-Martineau. The Relativistic Discriminator: A Key Element Missing From Standard GAN, 2018.

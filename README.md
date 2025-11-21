@@ -1,5 +1,7 @@
 # Ultra Zoom
 
+![UltraZoom Banner](https://raw.githubusercontent.com/andrewdalpino/UltraZoom/master/docs/images/ultrazoom_v1_banner.png)
+
 A fast single image super-resolution (SISR) model for upscaling images with ultra high-quality. Ultra Zoom uses a two-stage "zoom in and enhance" mechanism that utilizes a fast deterministic upscaling algorithm to upscale the image and then enhances it through a steerable residual pathway that operates primarily in the low-resolution subspace of a deep neural network.
 
 ## Key Features
@@ -113,8 +115,8 @@ x = image_to_tensor(image).unsqueeze(0)
 
 c = ControlVector(
     gaussian_blur=0.5,      # Higher values indicate more degradation
-    gaussian_noise=0.6,     # which increases the strength of the
-    jpeg_compression=0.7    # enhancement [0, 1].
+    gaussian_noise=0.2,     # which increases the strength of the
+    jpeg_compression=0.3    # enhancement [0, 1].
 ).to_tensor()
 
 y_pred = model.upscale(x, c)
@@ -123,6 +125,8 @@ pil_image = tensor_to_pil(y_pred.squeeze(0))
 
 pil_image.show()
 ```
+
+### ONNX Runtime
 
 ## Training
 

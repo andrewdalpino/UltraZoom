@@ -72,7 +72,7 @@ class UltraZoom(Module, PyTorchModelHubMixin):
             num_channels, control_features, hidden_ratio, num_encoder_layers
         )
 
-        self.decoder = SubpixelConv2d(num_channels, upscale_ratio)
+        self.decoder = SubpixelConv2d(num_channels, 3, upscale_ratio)
 
         self.upscale_ratio = upscale_ratio
         self.control_features = control_features
@@ -377,17 +377,16 @@ class InvertedBottleneck(Module):
 class SubpixelConv2d(Module):
     """A deconvolution layer utilizing sub-pixel convolution."""
 
-    def __init__(self, in_channels: int, upscale_ratio: int):
+    def __init__(self, in_channels: int, out_channels: int, upscale_ratio: int):
         super().__init__()
 
         assert upscale_ratio in {
-            1,
             2,
             3,
             4,
-        }, "Upscale ratio must be either 1, 2, 3, or 4."
+        }, "Upscale ratio must be either 2, 3, or 4."
 
-        out_channels = 3 * upscale_ratio**2
+        out_channels *= upscale_ratio**2
 
         self.conv = Conv2d(in_channels, out_channels, kernel_size=3, padding=1)
 

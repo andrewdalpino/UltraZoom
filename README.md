@@ -130,6 +130,97 @@ pil_image.show()
 
 ### ONNX Runtime
 
+For production deployment, you can use the ONNX models with ONNX Runtime. First, install the required packages:
+
+```sh
+pip install onnxruntime numpy pillow
+```
+
+> **Note:** For GPU acceleration on Windows, use `onnxruntime-directml` instead. On macOS, the standard `onnxruntime` package includes CoreML support.
+
+#### Non-control Models
+
+```python
+import numpy as np
+import onnxruntime as ort
+
+from PIL import Image
+
+model_path = "./model.onnx"
+image_path = "./image.png"
+
+# Load the ONNX model
+session = ort.InferenceSession(model_path, providers=["CPUExecutionProvider"])
+
+# Load and preprocess the image
+image = Image.open(image_path).convert("RGB")
+image_array = np.array(image, dtype=np.float32) / 255.0  # Normalize to [0, 1]
+
+# Convert from (H, W, C) to (1, C, H, W)
+input_tensor = np.transpose(image_array, (2, 0, 1))
+input_tensor = np.expand_dims(input_tensor, axis=0)
+
+# Run inference
+outputs = session.run(None, {"x": input_tensor})
+
+# Postprocess the output
+output_tensor = outputs[0][0]  # Remove batch dimension
+output_array = np.transpose(output_tensor, (1, 2, 0))  # (C, H, W) -> (H, W, C)
+output_array = np.clip(output_array, 0.0, 1.0)
+output_image = (output_array * 255).astype(np.uint8)
+
+# Display the result
+result = Image.fromarray(output_image, "RGB")
+result.show()
+```
+
+#### Control Models
+
+The control models accept an additional input `c` - a control vector with 3 values corresponding to the assumed level of degradation in the input image. Each value ranges from 0.0 (no degradation) to 1.0 (maximum degradation).
+
+| Index | Parameter | Description |
+|-------|-----------|-------------|
+| 0 | `gaussian_blur` | Deblurring strength |
+| 1 | `gaussian_noise` | Denoising strength |
+| 2 | `jpeg_compression` | JPEG artifact removal strength |
+
+```python
+import numpy as np
+import onnxruntime as ort
+
+from PIL import Image
+
+model_path = "./model.onnx"
+image_path = "./image.png"
+
+# Load the ONNX model
+session = ort.InferenceSession(model_path, providers=["CPUExecutionProvider"])
+
+# Load and preprocess the image
+image = Image.open(image_path).convert("RGB")
+image_array = np.array(image, dtype=np.float32) / 255.0
+
+# Convert from (H, W, C) to (1, C, H, W)
+input_tensor = np.transpose(image_array, (2, 0, 1))
+input_tensor = np.expand_dims(input_tensor, axis=0)
+
+# Define the control vector: [gaussian_blur, gaussian_noise, jpeg_compression]
+control_vector = np.array([[0.5, 0.2, 0.3]], dtype=np.float32)
+
+# Run inference with control vector
+outputs = session.run(None, {"x": input_tensor, "c": control_vector})
+
+# Postprocess the output
+output_tensor = outputs[0][0]
+output_array = np.transpose(output_tensor, (1, 2, 0))
+output_array = np.clip(output_array, 0.0, 1.0)
+output_image = (output_array * 255).astype(np.uint8)
+
+# Display the result
+result = Image.fromarray(output_image, "RGB")
+result.show()
+```
+
 ## Training
 
 ### Clone the Repository

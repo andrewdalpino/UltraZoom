@@ -28,7 +28,7 @@ from torchmetrics.image import (
     VisualInformationFidelity,
 )
 
-from data import ControlMix
+from data import ImageFolder
 from src.ultrazoom.model import UltraZoom
 from loss import VGGLoss
 
@@ -63,9 +63,15 @@ def main():
     parser.add_argument("--num_epochs", default=100, type=int)
     parser.add_argument("--learning_rate", default=2e-4, type=float)
     parser.add_argument("--max_gradient_norm", default=2.0, type=float)
-    parser.add_argument("--num_channels", default=48, type=int)
+    parser.add_argument("--primary_channels", default=48, type=int)
+    parser.add_argument("--primary_layers", default=2, type=int)
+    parser.add_argument("--secondary_channels", default=96, type=int)
+    parser.add_argument("--secondary_layers", default=2, type=int)
+    parser.add_argument("--tertiary_channels", default=192, type=int)
+    parser.add_argument("--tertiary_layers", default=4, type=int)
+    parser.add_argument("--quaternary_channels", default=384, type=int)
+    parser.add_argument("--quaternary_layers", default=4, type=int)
     parser.add_argument("--hidden_ratio", default=2, type=int)
-    parser.add_argument("--num_encoder_layers", default=20, type=int)
     parser.add_argument("--activation_checkpointing", action="store_true")
     parser.add_argument("--eval_interval", default=2, type=int)
     parser.add_argument("--checkpoint_interval", default=2, type=int)
@@ -123,7 +129,7 @@ def main():
     logger = SummaryWriter(args.run_dir_path)
 
     new_dataset = partial(
-        ControlMix,
+        ImageFolder,
         target_resolution=args.target_resolution,
         upscale_ratio=args.upscale_ratio,
         min_gaussian_blur=args.min_gaussian_blur,
@@ -167,10 +173,15 @@ def main():
 
     model_args = {
         "upscale_ratio": args.upscale_ratio,
-        "num_channels": args.num_channels,
-        "control_features": training.control_features,
+        "primary_channels": args.primary_channels,
+        "primary_layers": args.primary_layers,
+        "secondary_channels": args.secondary_channels,
+        "secondary_layers": args.secondary_layers,
+        "tertiary_channels": args.tertiary_channels,
+        "tertiary_layers": args.tertiary_layers,
+        "quaternary_channels": args.quaternary_channels,
+        "quaternary_layers": args.quaternary_layers,
         "hidden_ratio": args.hidden_ratio,
-        "num_encoder_layers": args.num_encoder_layers,
     }
 
     model = UltraZoom(**model_args)
@@ -221,15 +232,14 @@ def main():
         total_batches, total_steps = 0, 0
         total_gradient_norm = 0.0
 
-        for step, (x, c, y) in enumerate(
+        for step, (x, y) in enumerate(
             tqdm(train_loader, desc=f"Epoch {epoch}", leave=False), start=1
         ):
             x = x.to(args.device, non_blocking=True)
-            c = c.to(args.device, non_blocking=True)
             y = y.to(args.device, non_blocking=True)
 
             with amp_context:
-                y_pred, _ = model.forward(x, c)
+                y_pred = model.forward(x)
 
                 l2_loss = l2_loss_function(y_pred, y)
                 vgg22_loss, vgg54_loss = vgg_loss_function(y_pred, y)
@@ -282,12 +292,11 @@ def main():
         if epoch % args.eval_interval == 0:
             model.eval()
 
-            for x, c, y in tqdm(test_loader, desc="Testing", leave=False):
+            for x, y in tqdm(test_loader, desc="Testing", leave=False):
                 x = x.to(args.device, non_blocking=True)
-                c = c.to(args.device, non_blocking=True)
                 y = y.to(args.device, non_blocking=True)
 
-                y_pred = model.upscale(x, c)
+                y_pred = model.upscale(x)
 
                 psnr_metric.update(y_pred, y)
                 ssim_metric.update(y_pred, y)

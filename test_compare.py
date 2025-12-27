@@ -4,6 +4,8 @@ from argparse import ArgumentParser
 
 import torch
 
+from torch.nn.functional import interpolate
+
 from torchvision.io import decode_image
 from torchvision.transforms.v2 import ToDtype
 from torchvision.utils import make_grid, save_image
@@ -11,8 +13,6 @@ from torchvision.utils import make_grid, save_image
 from src.ultrazoom.model import UltraZoom
 
 import matplotlib.pyplot as plt
-
-from src.ultrazoom.control import ControlVector
 
 
 def main():
@@ -60,24 +60,17 @@ def main():
 
     x = image_to_tensor(image).unsqueeze(0).to(args.device)
 
-    c = (
-        ControlVector(
-            gaussian_blur=args.gaussian_blur,
-            gaussian_noise=args.gaussian_noise,
-            jpeg_compression=args.jpeg_compression,
-        )
-        .to_tensor()
-        .to(args.device)
-        .unsqueeze(0)
-    )
-
     print("Upscaling ...")
 
-    with torch.inference_mode():
-        y_pred, y_bicubic = model.forward(x, c)
+    y_bicubic = interpolate(
+        x,
+        scale_factor=2,
+        mode="bicubic",
+        align_corners=False,
+        recompute_scale_factor=True,
+    )
 
-    y_pred = torch.clamp(y_pred, 0, 1)
-    y_bicubic = torch.clamp(y_bicubic, 0, 1)
+    y_pred = model.upscale(x)
 
     pair = torch.stack(
         [

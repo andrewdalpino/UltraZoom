@@ -11,6 +11,7 @@ from torchvision.transforms.v2 import ToDtype
 from torchvision.utils import make_grid, save_image
 
 from src.ultrazoom.model import UltraZoom
+from src.ultrazoom.control import ControlVector
 
 import matplotlib.pyplot as plt
 
@@ -23,8 +24,8 @@ def main():
         "--checkpoint_path", default="./checkpoints/checkpoint.pt", type=str
     )
     parser.add_argument("--gaussian_blur", default=0.5, type=float)
-    parser.add_argument("--gaussian_noise", default=0.5, type=float)
-    parser.add_argument("--jpeg_compression", default=0.5, type=float)
+    parser.add_argument("--gaussian_noise", default=0.2, type=float)
+    parser.add_argument("--jpeg_compression", default=0.3, type=float)
     parser.add_argument("--device", default="cpu", type=str)
 
     args = parser.parse_args()
@@ -61,6 +62,13 @@ def main():
     x = image_to_tensor(image).unsqueeze(0).to(args.device)
 
     print("Upscaling ...")
+    c = ControlVector(
+        gaussian_blur=args.gaussian_blur,
+        gaussian_noise=args.gaussian_noise,
+        jpeg_compression=args.jpeg_compression,
+    )
+
+    c = c.to_tensor().unsqueeze(0).to(args.device)
 
     y_bicubic = interpolate(
         x,
@@ -70,7 +78,7 @@ def main():
         recompute_scale_factor=True,
     )
 
-    y_pred = model.upscale(x)
+    y_pred = model.upscale(x, c)
 
     pair = torch.stack(
         [

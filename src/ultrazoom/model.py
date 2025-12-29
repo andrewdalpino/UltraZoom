@@ -12,6 +12,7 @@ from torch.nn import (
     Module,
     ModuleList,
     Sequential,
+    Upsample,
     Linear,
     Conv2d,
     SiLU,
@@ -33,10 +34,13 @@ from torch.utils.checkpoint import checkpoint as torch_checkpoint
 from huggingface_hub import PyTorchModelHubMixin
 
 
+type FeatureMapSize = tuple[int, int] | list[int, int]
+
+
 class UltraZoom(Module, PyTorchModelHubMixin):
     """A U-Net based model for image super-resolution."""
 
-    AVAILABLE_UPSCALE_RATIOS = {2, 3, 4}
+    AVAILABLE_UPSCALE_RATIOS = {2, 4, 8}
 
     def __init__(
         self,
@@ -49,26 +53,45 @@ class UltraZoom(Module, PyTorchModelHubMixin):
         tertiary_layers: int,
         quaternary_channels: int,
         quaternary_layers: int,
+        control_features: int,
         hidden_ratio: int,
     ):
         super().__init__()
 
-        self.stem = Conv2d(3, primary_channels, kernel_size=3, padding=1)
+        if upscale_ratio not in self.AVAILABLE_UPSCALE_RATIOS:
+            raise ValueError(
+                f"Upscale ratio must be either 2, 4, or 8, {upscale_ratio} given."
+            )
+
+        self.bicubic = Upsample(scale_factor=upscale_ratio, mode="bicubic")
+
+        self.stem = Conv2d(3, primary_channels, kernel_size=1)
 
         self.unet = UNet(
-
-            primary_channels=primary_channels,
-            primary_layers=primary_layers,
-            secondary_channels=secondary_channels,
-            secondary_layers=secondary_layers,
-            tertiary_channels=tertiary_channels,
-            tertiary_layers=tertiary_layers,
-            quaternary_channels=quaternary_channels,
-            quaternary_layers=quaternary_layers,
-            hidden_ratio=hidden_ratio,
+            primary_channels,
+            primary_layers,
+            secondary_channels,
+            secondary_layers,
+            tertiary_channels,
+            tertiary_layers,
+            quaternary_channels,
+            quaternary_layers,
+            control_features,
+            hidden_ratio,
         )
 
-        self.head = SubpixelConv2d(primary_channels, 3, upscale_ratio)
+        match upscale_ratio:
+            case 2:
+                head = DecoderHead2X(primary_channels)
+            case 4:
+                head = DecoderHead4X(primary_channels)
+            case 8:
+                head = DecoderHead8X(primary_channels)
+
+        self.head = head
+
+        self.upscale_ratio = upscale_ratio
+        self.control_features = control_features
 
     @property
     def num_params(self) -> int:
@@ -114,21 +137,33 @@ class UltraZoom(Module, PyTorchModelHubMixin):
 
         self.unet.enable_activation_checkpointing()
 
-    def forward(self, x: Tensor) -> Tensor:
+    def forward(self, x: Tensor, c: Tensor) -> Tensor:
         """
         Args:
             x: Input image tensor of shape (B, 3, H, W).
 
         """
 
+        assert x.size(0) == c.size(
+            0
+        ), "Batch size of input image and control vector must be the same."
+
+        assert (
+            c.size(1) == self.control_features
+        ), f"Control vector must have exactly {self.control_features} elements."
+
+        s = self.bicubic.forward(x)
+
         z = self.stem.forward(x)
-        z = self.unet.forward(z)
+        z = self.unet.forward(z, c)
         z = self.head.forward(z)
+
+        z = s + z  # Global residual connection
 
         return z
 
     @torch.inference_mode()
-    def upscale(self, x: Tensor) -> Tensor:
+    def upscale(self, x: Tensor, c: Tensor) -> Tensor:
         """
         Convenience method for inference.
 
@@ -136,7 +171,7 @@ class UltraZoom(Module, PyTorchModelHubMixin):
             x: Input image tensor of shape (B, 3, H, W).
         """
 
-        z = self.forward(x)
+        z = self.forward(x, c)
 
         z = torch.clamp(z, 0, 1)
 
@@ -171,6 +206,7 @@ class UNet(Module):
         tertiary_layers: int,
         quaternary_channels: int,
         quaternary_layers: int,
+        control_features: int,
         hidden_ratio: int,
     ):
         super().__init__()
@@ -196,6 +232,7 @@ class UNet(Module):
             ceil(tertiary_layers / 2),
             quaternary_channels,
             ceil(quaternary_layers / 2),
+            control_features,
             hidden_ratio,
         )
 
@@ -208,6 +245,7 @@ class UNet(Module):
             floor(secondary_layers / 2),
             primary_channels,
             floor(primary_layers / 2),
+            control_features,
             hidden_ratio,
         )
 
@@ -223,10 +261,10 @@ class UNet(Module):
         self.encoder.enable_activation_checkpointing()
         self.decoder.enable_activation_checkpointing()
 
-    def forward(self, x: Tensor) -> Tensor:
-        z1, z2, z3, z4 = self.encoder.forward(x)
+    def forward(self, x: Tensor, c: Tensor) -> Tensor:
+        z1, z2, z3, z4 = self.encoder.forward(x, c)
 
-        z = self.decoder.forward(z4, z3, z2, z1)
+        z = self.decoder.forward(z4, z3, z2, z1, c)
 
         return z
 
@@ -244,6 +282,7 @@ class Encoder(Module):
         tertiary_layers: int,
         quaternary_channels: int,
         quaternary_layers: int,
+        control_features: int,
         hidden_ratio: int,
     ):
         super().__init__()
@@ -262,28 +301,28 @@ class Encoder(Module):
 
         self.stage1 = ModuleList(
             [
-                EncoderBlock(primary_channels, hidden_ratio)
+                EncoderBlock(primary_channels, control_features, hidden_ratio)
                 for _ in range(primary_layers)
             ]
         )
 
         self.stage2 = ModuleList(
             [
-                EncoderBlock(secondary_channels, hidden_ratio)
+                EncoderBlock(secondary_channels, control_features, hidden_ratio)
                 for _ in range(secondary_layers)
             ]
         )
 
         self.stage3 = ModuleList(
             [
-                EncoderBlock(tertiary_channels, hidden_ratio)
+                EncoderBlock(tertiary_channels, control_features, hidden_ratio)
                 for _ in range(tertiary_layers)
             ]
         )
 
         self.stage4 = ModuleList(
             [
-                EncoderBlock(quaternary_channels, hidden_ratio)
+                EncoderBlock(quaternary_channels, control_features, hidden_ratio)
                 for _ in range(quaternary_layers)
             ]
         )
@@ -292,7 +331,7 @@ class Encoder(Module):
         self.downsample2 = PixelCrush(secondary_channels, tertiary_channels, 2)
         self.downsample3 = PixelCrush(tertiary_channels, quaternary_channels, 2)
 
-        self.checkpoint = lambda layer, x: layer.forward(x)
+        self.checkpoint = lambda layer, x, c: layer.forward(x, c)
 
     def add_weight_norms(self) -> None:
         for layer in self.stage1:
@@ -336,26 +375,26 @@ class Encoder(Module):
 
         self.checkpoint = partial(torch_checkpoint, use_reentrant=False)
 
-    def forward(self, x: Tensor) -> tuple[Tensor, ...]:
+    def forward(self, x: Tensor, c: Tensor) -> tuple[Tensor, ...]:
         z1 = x
 
         for layer in self.stage1:
-            z1 = self.checkpoint(layer, z1)
+            z1 = self.checkpoint(layer, z1, c)
 
         z2 = self.downsample1.forward(z1)
 
         for layer in self.stage2:
-            z2 = self.checkpoint(layer, z2)
+            z2 = self.checkpoint(layer, z2, c)
 
         z3 = self.downsample2.forward(z2)
 
         for layer in self.stage3:
-            z3 = self.checkpoint(layer, z3)
+            z3 = self.checkpoint(layer, z3, c)
 
         z4 = self.downsample3.forward(z3)
 
         for layer in self.stage4:
-            z4 = self.checkpoint(layer, z4)
+            z4 = self.checkpoint(layer, z4, c)
 
         return z1, z2, z3, z4
 
@@ -363,9 +402,10 @@ class Encoder(Module):
 class EncoderBlock(Module):
     """A single encoder block consisting of two stages and a residual connection."""
 
-    def __init__(self, num_channels: int, hidden_ratio: int):
+    def __init__(self, num_channels: int, control_features: int, hidden_ratio: int):
         super().__init__()
 
+        self.stage1 = ChannelControl(num_channels, control_features)
         self.stage2 = InvertedBottleneck(num_channels, hidden_ratio)
 
     def add_weight_norms(self) -> None:
@@ -374,21 +414,23 @@ class EncoderBlock(Module):
     def add_lora_adapters(self, rank: int, alpha: float) -> None:
         self.stage2.add_lora_adapters(rank, alpha)
 
-    def forward(self, x: Tensor) -> Tensor:
-        z = self.stage2.forward(x)
+    def forward(self, x: Tensor, c: Tensor) -> Tensor:
+        z = self.stage1.forward(x, c)
+        z = self.stage2.forward(z)
 
         z = x + z  # Local residual connection
 
         return z
-    
 
-class ChannelAttention(Module):
+
+class ChannelControl(Module):
     """Channel-wise modulation layer for conditioning on a control vector."""
 
-    def __init__(self, num_channels: int):
+    def __init__(self, num_channels: int, control_features: int):
         super().__init__()
 
         assert num_channels > 0, "Number of channels must be greater than 0."
+        assert control_features > 0, "Control features must be greater than 0."
 
         scale = torch.ones(control_features, num_channels)
         shift = torch.zeros(control_features, num_channels)
@@ -409,7 +451,7 @@ class ChannelAttention(Module):
 
 
 class InvertedBottleneck(Module):
-    """A wide non-linear activation block with 3x3 convolutions."""
+    """A wide non-linear activation block with convolutions."""
 
     def __init__(self, num_channels: int, hidden_ratio: int):
         super().__init__()
@@ -419,8 +461,13 @@ class InvertedBottleneck(Module):
 
         hidden_channels = hidden_ratio * num_channels
 
-        self.conv1 = Conv2d(num_channels, hidden_channels, kernel_size=3, padding=1)
-        self.conv2 = Conv2d(hidden_channels, num_channels, kernel_size=3, padding=1)
+        self.conv1 = Conv2d(
+            num_channels, hidden_channels, kernel_size=3, padding=1, bias=False
+        )
+
+        self.conv2 = Conv2d(
+            hidden_channels, num_channels, kernel_size=3, padding=1, bias=False
+        )
 
         self.silu = SiLU()
 
@@ -500,6 +547,7 @@ class Decoder(Module):
         tertiary_layers: int,
         quaternary_channels: int,
         quaternary_layers: int,
+        control_features: int,
         hidden_ratio: int,
     ):
         super().__init__()
@@ -518,28 +566,28 @@ class Decoder(Module):
 
         self.stage1 = ModuleList(
             [
-                DecoderBlock(primary_channels, hidden_ratio)
+                DecoderBlock(primary_channels, control_features, hidden_ratio)
                 for _ in range(primary_layers)
             ]
         )
 
         self.stage2 = ModuleList(
             [
-                DecoderBlock(secondary_channels, hidden_ratio)
+                DecoderBlock(secondary_channels, control_features, hidden_ratio)
                 for _ in range(secondary_layers)
             ]
         )
 
         self.stage3 = ModuleList(
             [
-                DecoderBlock(tertiary_channels, hidden_ratio)
+                DecoderBlock(tertiary_channels, control_features, hidden_ratio)
                 for _ in range(tertiary_layers)
             ]
         )
 
         self.stage4 = ModuleList(
             [
-                DecoderBlock(quaternary_channels, hidden_ratio)
+                DecoderBlock(quaternary_channels, control_features, hidden_ratio)
                 for _ in range(quaternary_layers)
             ]
         )
@@ -548,7 +596,7 @@ class Decoder(Module):
         self.upsample2 = SubpixelConv2d(secondary_channels, tertiary_channels, 2)
         self.upsample3 = SubpixelConv2d(tertiary_channels, quaternary_channels, 2)
 
-        self.checkpoint = lambda layer, x: layer.forward(x)
+        self.checkpoint = lambda layer, x, c: layer.forward(x, c)
 
     def add_weight_norms(self) -> None:
         for layer in self.stage1:
@@ -593,23 +641,30 @@ class Decoder(Module):
         self.checkpoint = partial(torch_checkpoint, use_reentrant=False)
 
     @staticmethod
-    def crop_feature_maps(x: Tensor, size: list[int, int]) -> Tensor:
+    def crop_feature_maps(x: Tensor, size: FeatureMapSize) -> Tensor:
+        """
+        Center-crop the feature maps to the target size. This is sometimes necessary
+        due to rounding during down/upsampling operations.
+        """
         _, _, h, w = x.shape
 
         target_h, target_w = size
 
         start_h = (h - target_h) // 2
-        start_w = (w - target_w) // 2
+        end_h = start_h + target_h
 
-        return x[:, :, start_h : start_h + target_h, start_w : start_w + target_w]
+        start_w = (w - target_w) // 2
+        end_w = start_w + target_w
+
+        return x[:, :, start_h:end_h, start_w:end_w]
 
     def forward(
-        self, x1: Tensor, x2: Tensor, x3: Tensor, x4: Tensor
+        self, x1: Tensor, x2: Tensor, x3: Tensor, x4: Tensor, c: Tensor
     ) -> Tensor:
         z = x1
 
         for layer in self.stage1:
-            z = self.checkpoint(layer, z)
+            z = self.checkpoint(layer, z, c)
 
         z = self.upsample1.forward(z)
 
@@ -618,7 +673,7 @@ class Decoder(Module):
         z = x2 + z  # Regional residual connection
 
         for layer in self.stage2:
-            z = self.checkpoint(layer, z)
+            z = self.checkpoint(layer, z, c)
 
         z = self.upsample2.forward(z)
 
@@ -627,7 +682,7 @@ class Decoder(Module):
         z = x3 + z  # Regional residual connection
 
         for layer in self.stage3:
-            z = self.checkpoint(layer, z)
+            z = self.checkpoint(layer, z, c)
 
         z = self.upsample3.forward(z)
 
@@ -636,7 +691,7 @@ class Decoder(Module):
         z = x4 + z  # Regional residual connection
 
         for layer in self.stage4:
-            z = self.checkpoint(layer, z)
+            z = self.checkpoint(layer, z, c)
 
         return z
 
@@ -690,6 +745,78 @@ class SubpixelConv2d(Module):
         return z
 
 
+class DecoderHead2X(Module):
+    """A small decoder header for 2X upscaling in RGB space."""
+
+    def __init__(self, in_channels: int):
+        super().__init__()
+
+        self.upsample = SubpixelConv2d(in_channels, 3, 2)
+
+    def add_weight_norms(self) -> None:
+        self.upsample.add_weight_norms()
+
+    def add_lora_adapters(self, rank: int, alpha: float) -> None:
+        self.upsample.add_lora_adapters(rank, alpha)
+
+    def forward(self, x: Tensor) -> Tensor:
+        z = self.upsample.forward(x)
+
+        return z
+
+
+class DecoderHead4X(Module):
+    """A small decoder header for 4X upscaling in RGB space."""
+
+    def __init__(self, in_channels: int):
+        super().__init__()
+
+        self.upsample1 = SubpixelConv2d(in_channels, in_channels, 2)
+        self.upsample2 = SubpixelConv2d(in_channels, 3, 2)
+
+    def add_weight_norms(self) -> None:
+        self.upsample1.add_weight_norms()
+        self.upsample2.add_weight_norms()
+
+    def add_lora_adapters(self, rank: int, alpha: float) -> None:
+        self.upsample1.add_lora_adapters(rank, alpha)
+        self.upsample2.add_lora_adapters(rank, alpha)
+
+    def forward(self, x: Tensor) -> Tensor:
+        z = self.upsample1.forward(x)
+        z = self.upsample2.forward(z)
+
+        return z
+
+
+class DecoderHead8X(Module):
+    """A small decoder header for 8X upscaling in RGB space."""
+
+    def __init__(self, in_channels: int):
+        super().__init__()
+
+        self.upsample1 = SubpixelConv2d(in_channels, in_channels, 2)
+        self.upsample2 = SubpixelConv2d(in_channels, in_channels, 2)
+        self.upsample3 = SubpixelConv2d(in_channels, 3, 2)
+
+    def add_weight_norms(self) -> None:
+        self.upsample1.add_weight_norms()
+        self.upsample2.add_weight_norms()
+        self.upsample3.add_weight_norms()
+
+    def add_lora_adapters(self, rank: int, alpha: float) -> None:
+        self.upsample1.add_lora_adapters(rank, alpha)
+        self.upsample2.add_lora_adapters(rank, alpha)
+        self.upsample3.add_lora_adapters(rank, alpha)
+
+    def forward(self, x: Tensor) -> Tensor:
+        z = self.upsample1.forward(x)
+        z = self.upsample2.forward(z)
+        z = self.upsample3.forward(z)
+
+        return z
+
+
 class ChannelLoRA(Module):
     """Low rank channel decomposition transformation."""
 
@@ -728,7 +855,7 @@ class Bouncer(Module):
     AVAILABLE_MODEL_SIZES = {"small", "medium", "large"}
 
     @classmethod
-    def from_preconfigured(cls, input_channels: int, model_size: str) -> Self:
+    def from_preconfigured(cls, model_size: str) -> Self:
         """Return a new pre-configured model."""
 
         assert model_size in cls.AVAILABLE_MODEL_SIZES, "Invalid model size."
@@ -762,7 +889,7 @@ class Bouncer(Module):
                 quaternary_channels = 1024
 
         return cls(
-            input_channels,
+            3,
             primary_channels,
             primary_layers,
             secondary_channels,
@@ -952,32 +1079,80 @@ class DetectorBlock(Module):
 
         hidden_channels = hidden_ratio * num_channels
 
-        self.conv1 = Conv2d(
+        self.conv1 = DepthwiseSeparableConv2d(
             num_channels,
-            num_channels,
+            hidden_channels,
             kernel_size=7,
             padding=3,
-            groups=num_channels,
-            bias=False,
         )
 
-        self.conv2 = Conv2d(num_channels, hidden_channels, kernel_size=1)
-        self.conv3 = Conv2d(hidden_channels, num_channels, kernel_size=1)
+        self.conv2 = Conv2d(hidden_channels, num_channels, kernel_size=1)
 
         self.silu = SiLU()
 
     def add_spectral_norms(self) -> None:
-        self.conv1 = spectral_norm(self.conv1)
+        self.conv1.add_spectral_norms()
+
         self.conv2 = spectral_norm(self.conv2)
-        self.conv3 = spectral_norm(self.conv3)
 
     def forward(self, x: Tensor) -> Tensor:
         z = self.conv1.forward(x)
-        z = self.conv2.forward(z)
         z = self.silu.forward(z)
-        z = self.conv3.forward(z)
+        z = self.conv2.forward(z)
 
         z = x + z  # Local residual connection
+
+        return z
+
+
+class DepthwiseSeparableConv2d(Module):
+    """A depth-wise separable convolution layer."""
+
+    def __init__(
+        self, in_channels: int, out_channels: int, kernel_size: int, padding: int
+    ):
+        super().__init__()
+
+        assert in_channels > 0, "Input channels must be greater than 0."
+        assert out_channels > 0, "Output channels must be greater than 0."
+        assert kernel_size > 0, "Kernel size must be greater than 0."
+        assert padding >= 0, "Padding must be non-negative."
+
+        self.depthwise = Conv2d(
+            in_channels,
+            in_channels,
+            kernel_size=kernel_size,
+            padding=padding,
+            groups=in_channels,
+            bias=False,
+        )
+
+        self.pointwise = Conv2d(in_channels, out_channels, kernel_size=1)
+
+    def add_weight_norms(self) -> None:
+        self.depthwise = weight_norm(self.depthwise)
+        self.pointwise = weight_norm(self.pointwise)
+
+    def add_spectral_norms(self) -> None:
+        self.depthwise = spectral_norm(self.depthwise)
+        self.pointwise = spectral_norm(self.pointwise)
+
+    def add_lora_adapters(self, rank: int, alpha: float) -> None:
+        register_parametrization(
+            self.depthwise,
+            "weight",
+            ChannelLoRA(self.depthwise, rank, alpha),
+        )
+
+        register_parametrization(
+            self.pointwise,
+            "weight",
+            ChannelLoRA(self.pointwise, rank, alpha),
+        )
+
+    def forward(self, x: Tensor) -> Tensor:
+        z = self.depthwise.forward(x)
+        z = self.pointwise.forward(z)
 
         return z
 

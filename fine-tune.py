@@ -31,7 +31,7 @@ from torchmetrics.image import (
 
 from torchmetrics.classification import BinaryPrecision, BinaryRecall
 
-from data import ControlMix
+from data import ImageFolder
 from src.ultrazoom.model import UltraZoom, Bouncer
 from loss import RelativisticBCELoss
 
@@ -130,7 +130,7 @@ def main():
     upscaler_args = checkpoint["model_args"]
 
     new_dataset = partial(
-        ControlMix,
+        ImageFolder,
         target_resolution=args.target_resolution,
         upscale_ratio=upscaler_args["upscale_ratio"],
         min_gaussian_blur=args.min_gaussian_blur,
@@ -262,7 +262,7 @@ def main():
             update_this_step = step % args.gradient_accumulation_steps == 0
 
             with amp_context:
-                u_pred, _ = upscaler.forward(x, c)
+                u_pred = upscaler.forward(x, c)
 
                 _, _, _, _, c_pred_fake = critic.forward(u_pred.detach())
                 _, _, _, _, c_pred_real = critic.forward(y)

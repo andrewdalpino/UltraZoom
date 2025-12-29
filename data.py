@@ -25,7 +25,7 @@ from src.ultrazoom.control import ControlVector
 from transforms import GaussianBlur, GaussianNoise, JPEGCompression
 
 
-class ControlMix(Dataset):
+class ImageFolder(Dataset):
     """
     A dataset of single HR images with a blind degradation function used to derive the LR counterpart.
     """

@@ -1,4 +1,4 @@
-from math import sqrt, floor, ceil
+from math import sqrt, floor, ceil, log2
 
 from typing import Self
 
@@ -80,15 +80,7 @@ class UltraZoom(Module, PyTorchModelHubMixin):
             hidden_ratio,
         )
 
-        match upscale_ratio:
-            case 2:
-                head = DecoderHead2X(primary_channels)
-            case 4:
-                head = DecoderHead4X(primary_channels)
-            case 8:
-                head = DecoderHead8X(primary_channels)
-
-        self.head = head
+        self.head = DecoderHead(primary_channels, upscale_ratio)
 
         self.upscale_ratio = upscale_ratio
         self.control_features = control_features
@@ -745,74 +737,37 @@ class SubpixelConv2d(Module):
         return z
 
 
-class DecoderHead2X(Module):
-    """A small decoder header for 2X upscaling in RGB space."""
+class DecoderHead(Module):
+    """A small decoder header for upscaling in RGB space."""
 
-    def __init__(self, in_channels: int):
+    def __init__(self, in_channels: int, upscale_ratio: int):
         super().__init__()
 
-        self.upsample = SubpixelConv2d(in_channels, 3, 2)
+        assert upscale_ratio in {
+            2,
+            4,
+            8,
+        }, "Upscale ratio must be either 2, 4, or 8."
+
+        self.upsample = Sequential(
+            *[
+                SubpixelConv2d(in_channels, in_channels, 2)
+                for _ in range(int(log2(upscale_ratio)))
+            ]
+        )
+
+        self.upsample.append(SubpixelConv2d(in_channels, 3, 2))
 
     def add_weight_norms(self) -> None:
-        self.upsample.add_weight_norms()
+        for module in self.upsample:
+            module.add_weight_norms()
 
     def add_lora_adapters(self, rank: int, alpha: float) -> None:
-        self.upsample.add_lora_adapters(rank, alpha)
+        for module in self.upsample:
+            module.add_lora_adapters(rank, alpha)
 
     def forward(self, x: Tensor) -> Tensor:
         z = self.upsample.forward(x)
-
-        return z
-
-
-class DecoderHead4X(Module):
-    """A small decoder header for 4X upscaling in RGB space."""
-
-    def __init__(self, in_channels: int):
-        super().__init__()
-
-        self.upsample1 = SubpixelConv2d(in_channels, in_channels, 2)
-        self.upsample2 = SubpixelConv2d(in_channels, 3, 2)
-
-    def add_weight_norms(self) -> None:
-        self.upsample1.add_weight_norms()
-        self.upsample2.add_weight_norms()
-
-    def add_lora_adapters(self, rank: int, alpha: float) -> None:
-        self.upsample1.add_lora_adapters(rank, alpha)
-        self.upsample2.add_lora_adapters(rank, alpha)
-
-    def forward(self, x: Tensor) -> Tensor:
-        z = self.upsample1.forward(x)
-        z = self.upsample2.forward(z)
-
-        return z
-
-
-class DecoderHead8X(Module):
-    """A small decoder header for 8X upscaling in RGB space."""
-
-    def __init__(self, in_channels: int):
-        super().__init__()
-
-        self.upsample1 = SubpixelConv2d(in_channels, in_channels, 2)
-        self.upsample2 = SubpixelConv2d(in_channels, in_channels, 2)
-        self.upsample3 = SubpixelConv2d(in_channels, 3, 2)
-
-    def add_weight_norms(self) -> None:
-        self.upsample1.add_weight_norms()
-        self.upsample2.add_weight_norms()
-        self.upsample3.add_weight_norms()
-
-    def add_lora_adapters(self, rank: int, alpha: float) -> None:
-        self.upsample1.add_lora_adapters(rank, alpha)
-        self.upsample2.add_lora_adapters(rank, alpha)
-        self.upsample3.add_lora_adapters(rank, alpha)
-
-    def forward(self, x: Tensor) -> Tensor:
-        z = self.upsample1.forward(x)
-        z = self.upsample2.forward(z)
-        z = self.upsample3.forward(z)
 
         return z
 

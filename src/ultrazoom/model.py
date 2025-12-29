@@ -822,7 +822,7 @@ class Bouncer(Module):
             case "small":
                 primary_channels = 64
                 secondary_channels = 126
-                secondary_layers = 3
+                secondary_layers = 4
                 tertiary_channels = 256
                 tertiary_layers = 6
                 quaternary_channels = 512
@@ -830,7 +830,7 @@ class Bouncer(Module):
             case "medium":
                 primary_channels = 96
                 secondary_channels = 192
-                secondary_layers = 3
+                secondary_layers = 4
                 tertiary_channels = 384
                 tertiary_layers = 12
                 quaternary_channels = 768

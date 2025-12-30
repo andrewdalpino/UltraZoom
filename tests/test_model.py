@@ -1,6 +1,5 @@
 import unittest
 import torch
-from torch import Tensor
 from src.ultrazoom.model import (
     UltraZoom,
     ONNXModel,
@@ -11,7 +10,6 @@ from src.ultrazoom.model import (
     InvertedBottleneck,
     PixelCrush,
     Decoder,
-    DecoderBlock,
     DecoderHead,
     SubpixelConv2d,
     ChannelLoRA,
@@ -38,18 +36,6 @@ class BaseModelTest(unittest.TestCase):
         self.hidden_ratio = 2
         self.control_features = 3
         self.control_tensor = torch.rand(self.batch_size, self.control_features)
-
-    def assert_output_shape(self, module, input_tensor, expected_shape):
-        output = module(input_tensor)
-        self.assertEqual(output.shape, expected_shape)
-
-    def assert_forward_pass(self, module, input_tensor):
-        try:
-            output = module(input_tensor)
-            self.assertIsInstance(output, Tensor)
-            return output
-        except Exception as e:
-            self.fail(f"Forward pass failed with error: {e}")
 
 
 class TestUltraZoom(BaseModelTest):
@@ -629,7 +615,7 @@ class TestBouncer(BaseModelTest):
 
     def test_forward(self):
         z1, z2, z3, z4, prediction = self.bouncer(self.input_tensor)
-        self.assertIsInstance(prediction, Tensor)
+        self.assertIsInstance(prediction, torch.Tensor)
         self.assertEqual(prediction.shape, (self.batch_size, 1))
 
     def test_predict(self):

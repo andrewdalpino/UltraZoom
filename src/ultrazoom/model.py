@@ -12,7 +12,6 @@ from torch.nn import (
     Module,
     ModuleList,
     Sequential,
-    Upsample,
     Linear,
     Conv2d,
     SiLU,
@@ -58,13 +57,6 @@ class UltraZoom(Module, PyTorchModelHubMixin):
     ):
         super().__init__()
 
-        if upscale_ratio not in self.AVAILABLE_UPSCALE_RATIOS:
-            raise ValueError(
-                f"Upscale ratio must be either 2, 4, or 8, {upscale_ratio} given."
-            )
-
-        self.bicubic = Upsample(scale_factor=upscale_ratio, mode="bicubic")
-
         self.stem = Conv2d(3, primary_channels, kernel_size=1)
 
         self.unet = UNet(
@@ -105,6 +97,7 @@ class UltraZoom(Module, PyTorchModelHubMixin):
         """Add weight normalization parameterization to the network."""
 
         self.unet.add_weight_norms()
+        self.head.add_weight_norms()
 
     def add_lora_adapters(self, rank: int, alpha: float) -> None:
         """Add LoRA adapters to all convolutional layers in the network."""
@@ -144,13 +137,9 @@ class UltraZoom(Module, PyTorchModelHubMixin):
             c.size(1) == self.control_features
         ), f"Control vector must have exactly {self.control_features} elements."
 
-        s = self.bicubic.forward(x)
-
         z = self.stem.forward(x)
         z = self.unet.forward(z, c)
         z = self.head.forward(z)
-
-        z = s + z  # Global residual connection
 
         return z
 
@@ -692,6 +681,43 @@ class DecoderBlock(EncoderBlock):
     pass
 
 
+class DecoderHead(Module):
+    """A decoder header for gradually upscaling the LR feature maps."""
+
+    def __init__(self, in_channels: int, upscale_ratio: int):
+        super().__init__()
+
+        assert upscale_ratio in {
+            2,
+            4,
+            8,
+        }, "Upscale ratio must be either 2, 4, or 8."
+
+        num_layers = int(log2(upscale_ratio))
+
+        self.upsample = Sequential(
+            *[
+                SubpixelConv2d(in_channels, in_channels, 2)
+                for _ in range(num_layers - 1)
+            ]
+        )
+
+        self.upsample.append(SubpixelConv2d(in_channels, 3, 2))
+
+    def add_weight_norms(self) -> None:
+        for module in self.upsample:
+            module.add_weight_norms()
+
+    def add_lora_adapters(self, rank: int, alpha: float) -> None:
+        for module in self.upsample:
+            module.add_lora_adapters(rank, alpha)
+
+    def forward(self, x: Tensor) -> Tensor:
+        z = self.upsample.forward(x)
+
+        return z
+    
+
 class SubpixelConv2d(Module):
     """Upsample the feature maps using subpixel convolution."""
 
@@ -733,41 +759,6 @@ class SubpixelConv2d(Module):
     def forward(self, x: Tensor) -> Tensor:
         z = self.conv.forward(x)
         z = self.shuffle.forward(z)
-
-        return z
-
-
-class DecoderHead(Module):
-    """A small decoder header for upscaling in RGB space."""
-
-    def __init__(self, in_channels: int, upscale_ratio: int):
-        super().__init__()
-
-        assert upscale_ratio in {
-            2,
-            4,
-            8,
-        }, "Upscale ratio must be either 2, 4, or 8."
-
-        self.upsample = Sequential(
-            *[
-                SubpixelConv2d(in_channels, in_channels, 2)
-                for _ in range(int(log2(upscale_ratio)))
-            ]
-        )
-
-        self.upsample.append(SubpixelConv2d(in_channels, 3, 2))
-
-    def add_weight_norms(self) -> None:
-        for module in self.upsample:
-            module.add_weight_norms()
-
-    def add_lora_adapters(self, rank: int, alpha: float) -> None:
-        for module in self.upsample:
-            module.add_lora_adapters(rank, alpha)
-
-    def forward(self, x: Tensor) -> Tensor:
-        z = self.upsample.forward(x)
 
         return z
 
@@ -1083,10 +1074,6 @@ class DepthwiseSeparableConv2d(Module):
         )
 
         self.pointwise = Conv2d(in_channels, out_channels, kernel_size=1)
-
-    def add_weight_norms(self) -> None:
-        self.depthwise = weight_norm(self.depthwise)
-        self.pointwise = weight_norm(self.pointwise)
 
     def add_spectral_norms(self) -> None:
         self.depthwise = spectral_norm(self.depthwise)

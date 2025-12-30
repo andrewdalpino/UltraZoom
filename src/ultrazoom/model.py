@@ -716,7 +716,7 @@ class DecoderHead(Module):
         z = self.upsample.forward(x)
 
         return z
-    
+
 
 class SubpixelConv2d(Module):
     """Upsample the feature maps using subpixel convolution."""

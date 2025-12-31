@@ -1,18 +1,18 @@
-# Ultra Zoom
+# Ultra Zoom™
 
 ![UltraZoom Banner](https://raw.githubusercontent.com/andrewdalpino/UltraZoom/master/docs/images/ultrazoom_v1_banner.png)
 
-A fast single image super-resolution (SISR) model for upscaling images with ultra high-quality. Ultra Zoom uses a two-stage "zoom in and enhance" mechanism that utilizes a fast deterministic upscaling algorithm to upscale the image and then enhances it through a steerable residual pathway that operates primarily in the low-resolution subspace of a deep neural network.
+A fast single image super-resolution (SISR) model for upscaling images with ultra high-quality. Ultra Zoom™ uses a two-stage "zoom in and enhance" mechanism that utilizes a fast deterministic upscaling algorithm to upscale the image and then enhances it through a steerable residual pathway that operates primarily in the low-resolution subspace of a deep neural network.
 
 **Note:** This project has no relation to [UltraZoom: Generating Gigapixel Images from Regular Photos](https://dl.acm.org/doi/10.1145/3757377.3763919) which was published after this project under the same name and is using the trademark without permission.
 
 ## Key Features
 
-- **Fast and scalable**: Ultra Zoom uses a unique "zoom in and enhance" mechanism that combines the speed of deterministic bicubic interpolation with the power of a deep neural network.
+- **Fast and scalable**: Ultra Zoom™ uses a unique "zoom in and enhance" mechanism that combines the speed of deterministic bicubic interpolation with the power of a deep neural network.
 
-- **Controllable enhancements**: Ultra Zoom integrates channel-wise control modules directly into the architecture, allowing you to finely adjust the amount of denoising, deblurring, and deartifacting to suite your image source.
+- **Controllable enhancements**: Ultra Zoom™ integrates channel-wise control modules directly into the architecture, allowing you to finely adjust the amount of denoising, deblurring, and deartifacting to suite your image source.
 
-- **Full RGB**: Unlike many efficient SR models that only operate in the luminance domain, Ultra Zoom operates within the full RGB color domain enhancing both luminance and chrominance for the best possible image quality.
+- **Full RGB**: Unlike many efficient SR models that only operate in the luminance domain, Ultra Zoom™ operates within the full RGB color domain enhancing both luminance and chrominance for the best possible image quality.
 
 ## Demos
 
@@ -87,7 +87,7 @@ pil_image.show()
 
 ### Control Version
 
-The control version of Ultra Zoom allows you to independently adjust the level of deblurring, denoising, and deartifacting applied to the upscaled image. We accomplish this by conditioning the input image on a Control Vector that gets picked up by control modules embedded into each layer of the encoder. Version `0.2.x` of the library is required for control functionality.
+The control version of Ultra Zoom™ allows you to independently adjust the level of deblurring, denoising, and deartifacting applied to the upscaled image. We accomplish this by conditioning the input image on a Control Vector that gets picked up by control modules embedded into each layer of the encoder. Version `0.2.x` of the library is required for control functionality.
 
 ```sh
 pip install ultrazoom~=0.2.0 torchvision
@@ -247,7 +247,7 @@ pip install -r requirements.txt
 
 ### Pretraining
 
-Ultra Zoom is trained in two stages. The first stage focuses on building a foundation model for fine-tuning. It aims to jointly minimize the Pixel Loss with high and low frequency perceptual losses from the perspective of a pretrained VGG19 image classifier. To start training with the default settings, add your training and testing images to the `./dataset/train` and `./dataset/test` folders respectively and call the pretraining script like in the example below. If you are looking for good training sets to start with we recommend the `DIV2K` and/or `Flicker2K` datasets.
+Ultra Zoom™ is trained in two stages. The first stage focuses on building a foundation model for fine-tuning. It aims to jointly minimize the Pixel Loss with high and low frequency perceptual losses from the perspective of a pretrained VGG19 image classifier. To start training with the default settings, add your training and testing images to the `./dataset/train` and `./dataset/test` folders respectively and call the pretraining script like in the example below. If you are looking for good training sets to start with we recommend the `DIV2K` and/or `Flicker2K` datasets.
 
 ```sh
 python pretrain.py
@@ -319,7 +319,7 @@ Then navigate to the dashboard using your favorite web browser.
 
 ### Fine-tuning
 
-This next stage focuses on squeezing extra performance out of the model using an adversarial training framework. Step 2 of training takes the pretrained checkpoint and fine-tunes the model using feedback from an adversarial critic model. The critic is specially optimized to detect slight differences between real images and images generated by Ultra Zoom. It uses feedback from the upscaler to improve its detection rate and in turn the upscaler uses feedback from the critic to improve its fool rate. This stage can be considered fully optimized when the critic can no longer reliably detect fake images i.e. the F1 score is pegged near 0.5. To start fine-tuning your pretrained checkpoint see the example below.
+This next stage focuses on squeezing extra performance out of the model using an adversarial training framework. Step 2 of training takes the pretrained checkpoint and fine-tunes the model using feedback from an adversarial critic model. The critic is specially optimized to detect slight differences between real images and images generated by Ultra Zoom™. It uses feedback from the upscaler to improve its detection rate and in turn the upscaler uses feedback from the critic to improve its fool rate. This stage can be considered fully optimized when the critic can no longer reliably detect fake images i.e. the F1 score is pegged near 0.5. To start fine-tuning your pretrained checkpoint see the example below.
 
 ```sh
 python fine-tune.py --base_checkpoint_path=./checkpoints/2X-100.pt

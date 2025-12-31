@@ -181,7 +181,6 @@ def main():
         "tertiary_layers": args.tertiary_layers,
         "quaternary_channels": args.quaternary_channels,
         "quaternary_layers": args.quaternary_layers,
-        "control_features": training.control_features,
         "hidden_ratio": args.hidden_ratio,
     }
 
@@ -233,15 +232,14 @@ def main():
         total_batches, total_steps = 0, 0
         total_gradient_norm = 0.0
 
-        for step, (x, c, y) in enumerate(
+        for step, (x, y) in enumerate(
             tqdm(train_loader, desc=f"Epoch {epoch}", leave=False), start=1
         ):
             x = x.to(args.device, non_blocking=True)
-            c = c.to(args.device, non_blocking=True)
             y = y.to(args.device, non_blocking=True)
 
             with amp_context:
-                y_pred = model.forward(x, c)
+                y_pred = model.forward(x)
 
                 l2_loss = l2_loss_function(y_pred, y)
                 vgg22_loss, vgg54_loss = vgg_loss_function(y_pred, y)
@@ -294,12 +292,11 @@ def main():
         if epoch % args.eval_interval == 0:
             model.eval()
 
-            for x, c, y in tqdm(test_loader, desc="Testing", leave=False):
+            for x, y in tqdm(test_loader, desc="Testing", leave=False):
                 x = x.to(args.device, non_blocking=True)
-                c = c.to(args.device, non_blocking=True)
                 y = y.to(args.device, non_blocking=True)
 
-                y_pred = model.upscale(x, c)
+                y_pred = model.upscale(x)
 
                 psnr_metric.update(y_pred, y)
                 ssim_metric.update(y_pred, y)

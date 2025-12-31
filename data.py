@@ -20,8 +20,6 @@ from torchvision.transforms.v2.functional import InterpolationMode
 
 from PIL import Image
 
-from src.ultrazoom.control import ControlVector
-
 from transforms import GaussianBlur, GaussianNoise, JPEGCompression
 
 
@@ -102,6 +100,10 @@ class ImageFolder(Dataset):
                     degraded_resolution,
                     interpolation=InterpolationMode.BILINEAR,
                 ),
+                Resize(
+                    degraded_resolution,
+                    interpolation=InterpolationMode.NEAREST,
+                ),
             ]
         )
 
@@ -123,17 +125,13 @@ class ImageFolder(Dataset):
         self.compression_transform = compression_transform
         self.to_tensor_transform = to_tensor_transform
 
-    @property
-    def control_features(self) -> int:
-        return 3
-
     @classmethod
     def has_image_extension(cls, filename: str) -> bool:
         _, extension = path.splitext(filename)
 
         return extension in cls.ALLOWED_EXTENSIONS
 
-    def __getitem__(self, index: int) -> tuple[Tensor, ControlVector, Tensor]:
+    def __getitem__(self, index: int) -> tuple[Tensor, Tensor]:
         image_path = self.image_paths[index]
 
         image = decode_image(image_path, mode=self.IMAGE_MODE)
@@ -141,33 +139,15 @@ class ImageFolder(Dataset):
         if self.pre_transform:
             image = self.pre_transform.forward(image)
 
-        x, gaussian_blur_sigma = self.blur_transform.forward(image)
-        x, gaussian_noise_sigma = self.gaussian_noise_transform.forward(x)
+        x, _ = self.blur_transform.forward(image)
+        x, _ = self.gaussian_noise_transform.forward(x)
         x = self.resize_transform.forward(x)
-        x, jpeg_compression = self.compression_transform.forward(x)
+        x, _ = self.compression_transform.forward(x)
         x = self.to_tensor_transform.forward(x)
-
-        gaussian_blur = (gaussian_blur_sigma - self.min_gaussian_blur) / (
-            self.max_gaussian_blur - self.min_gaussian_blur
-        )
-
-        gaussian_noise = (gaussian_noise_sigma - self.min_gaussian_noise) / (
-            self.max_gaussian_noise - self.min_gaussian_noise
-        )
-
-        jpeg_compression = (jpeg_compression - self.min_compression) / (
-            self.max_compression - self.min_compression
-        )
-
-        c = ControlVector(
-            gaussian_blur,
-            gaussian_noise,
-            jpeg_compression,
-        ).to_tensor()
 
         y = self.to_tensor_transform.forward(image)
 
-        return x, c, y
+        return x, y
 
     def __len__(self):
         return len(self.image_paths)

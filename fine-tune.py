@@ -249,11 +249,10 @@ def main():
 
         is_warmup = epoch <= args.critic_warmup_epochs
 
-        for step, (x, c, y) in enumerate(
+        for step, (x, y) in enumerate(
             tqdm(train_loader, desc=f"Epoch {epoch}", leave=False), start=1
         ):
             x = x.to(args.device, non_blocking=True)
-            c = c.to(args.device, non_blocking=True)
             y = y.to(args.device, non_blocking=True)
 
             y_real = torch.full((y.size(0), 1), 1.0).to(args.device)
@@ -262,7 +261,7 @@ def main():
             update_this_step = step % args.gradient_accumulation_steps == 0
 
             with amp_context:
-                u_pred = upscaler.forward(x, c)
+                u_pred = upscaler.forward(x)
 
                 _, _, _, _, c_pred_fake = critic.forward(u_pred.detach())
                 _, _, _, _, c_pred_real = critic.forward(y)
@@ -355,15 +354,14 @@ def main():
             upscaler.eval()
             critic.eval()
 
-            for x, c, y in tqdm(test_loader, desc="Testing", leave=False):
+            for x, y in tqdm(test_loader, desc="Testing", leave=False):
                 x = x.to(args.device, non_blocking=True)
-                c = c.to(args.device, non_blocking=True)
                 y = y.to(args.device, non_blocking=True)
 
                 y_real = torch.full((y.size(0), 1), 1.0).to(args.device)
                 y_fake = torch.full((y.size(0), 1), 0.0).to(args.device)
 
-                u_pred = upscaler.upscale(x, c)
+                u_pred = upscaler.upscale(x)
 
                 c_pred_real = critic.predict(y)
                 c_pred_fake = critic.predict(u_pred)

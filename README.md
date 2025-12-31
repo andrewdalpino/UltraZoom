@@ -4,7 +4,7 @@
 
 A fast single image super-resolution (SISR) model for upscaling images with ultra high-quality. Ultra Zoom uses a two-stage "zoom in and enhance" mechanism that utilizes a fast deterministic upscaling algorithm to upscale the image and then enhances it through a steerable residual pathway that operates primarily in the low-resolution subspace of a deep neural network.
 
-**Note:** This project has no relation to [UltraZoom: Generating Gigapixel Images from Regular Photos](https://dl.acm.org/doi/10.1145/3757377.3763919) which was published under the same name.
+**Note:** This project has no relation to [UltraZoom: Generating Gigapixel Images from Regular Photos](https://dl.acm.org/doi/10.1145/3757377.3763919) which was published after this project under the same name.
 
 ## Key Features
 
@@ -35,7 +35,7 @@ This comparison demonstrates the individual enhancements applied in isolation.
 The following pretrained models are available on HuggingFace Hub.
 
 | Name | Upscale | Num Channels | Encoder Layers | Parameters | Control Modules | Library Version |
-|---|---|---|---|---|---|---|
+| --- | --- | --- | --- | --- | --- | --- |
 | [andrewdalpino/UltraZoom-2X-Ctrl](https://huggingface.co/andrewdalpino/UltraZoom-2X-Ctrl) | 2X | 48 | 20 | 1.8M | Yes | 0.2.x |
 | [andrewdalpino/UltraZoom-3X-Ctrl](https://huggingface.co/andrewdalpino/UltraZoom-3X-Ctrl) | 3X | 54 | 30 | 3.5M | Yes | 0.2.x |
 | [andrewdalpino/UltraZoom-4X-Ctrl](https://huggingface.co/andrewdalpino/UltraZoom-4X-Ctrl) | 4X | 96 | 40 | 14M | Yes | 0.2.x |
@@ -237,7 +237,7 @@ git clone https://github.com/andrewdalpino/UltraZoom
 
 Project dependencies are specified in the `requirements.txt` file. You can install them with [pip](https://pip.pypa.io/en/stable/) using the following command from the project root. We recommend using a virtual environment such as `venv` to keep package dependencies on your system tidy.
 
-```
+```sh
 python -m venv ./.venv
 
 source ./.venv/bin/activate
@@ -284,7 +284,7 @@ Then navigate to the dashboard using your favorite web browser.
 #### Pretraining Arguments
 
 | Argument | Default | Type | Description |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | --train_images_path | "./dataset/train" | str | The path to the folder containing your training images. |
 | --test_images_path | "./dataset/test" | str | The path to the folder containing your testing images. |
 | --num_dataset_processes | 8 | int | The number of CPU processes to use to preprocess the dataset. |
@@ -391,7 +391,7 @@ python test-compare.py --guassian_blur=0.5 --gaussian_noise=0.7 --jpeg_compressi
 #### Test compare Arguments
 
 | Argument | Default | Type | Description |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | --image_path | None | str | The path to the image file to be upscaled by the model. |
 | --checkpoint_path | "./checkpoints/fine-tuned.pt" | str | The path to the base checkpoint file on disk. |
 | --gaussian_blur | 0.5 | float | The strength of gaussian blur removal from the image, between 0 and 1. |

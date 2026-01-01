@@ -4,8 +4,6 @@
 
 A fast single image super-resolution (SISR) model for upscaling images with ultra high-quality. Ultra Zoom™ uses a two-stage "zoom in and enhance" mechanism that utilizes a fast deterministic upscaling algorithm to upscale the image and then enhances it through a steerable residual pathway that operates primarily in the low-resolution subspace of a deep neural network.
 
-**Note:** This project has no relation to [UltraZoom: Generating Gigapixel Images from Regular Photos](https://dl.acm.org/doi/10.1145/3757377.3763919) which was published after this project under the same name and is using the trademark without permission.
-
 ## Key Features
 
 - **Fast and scalable**: Ultra Zoom™ uses a unique "zoom in and enhance" mechanism that combines the speed of deterministic bicubic interpolation with the power of a deep neural network.

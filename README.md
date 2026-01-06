@@ -332,7 +332,7 @@ python fine-tune.py --base_checkpoint_path="./checkpoints/2X-100.pt" --critic_mo
 #### Fine-tuning Arguments
 
 | Argument | Default | Type | Description |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | --base_checkpoint_path | None | str | The path to the pretrained checkpoint. |
 | --train_images_path | "./dataset/train" | str | The path to the folder containing your training images. |
 | --test_images_path | "./dataset/test" | str | The path to the folder containing your testing images. |

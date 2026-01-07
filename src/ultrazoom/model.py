@@ -15,6 +15,7 @@ from torch.nn import (
     Linear,
     Conv2d,
     SiLU,
+    Sigmoid,
     PixelShuffle,
     AdaptiveAvgPool2d,
     Flatten,
@@ -372,6 +373,7 @@ class EncoderBlock(Module):
         super().__init__()
 
         self.stage1 = InvertedBottleneck(num_channels, hidden_ratio)
+        self.stage2 = ChannelAttention(num_channels)
 
     def add_weight_norms(self) -> None:
         self.stage1.add_weight_norms()
@@ -381,6 +383,7 @@ class EncoderBlock(Module):
 
     def forward(self, x: Tensor) -> Tensor:
         z = self.stage1.forward(x)
+        z = self.stage2.forward(z)
 
         z = x + z  # Local residual connection
 
@@ -398,32 +401,18 @@ class InvertedBottleneck(Module):
 
         hidden_channels = hidden_ratio * num_channels
 
-        self.conv1 = Conv2d(
-            num_channels, hidden_channels, kernel_size=3, padding=1, bias=False
-        )
-
-        self.conv2 = Conv2d(
-            hidden_channels, num_channels, kernel_size=3, padding=1, bias=False
-        )
+        self.conv1 = MultiscaleAttentionConv2d(num_channels, hidden_channels)
+        self.conv2 = MultiscaleAttentionConv2d(hidden_channels, num_channels)
 
         self.silu = SiLU()
 
     def add_weight_norms(self) -> None:
-        self.conv1 = weight_norm(self.conv1)
-        self.conv2 = weight_norm(self.conv2)
+        self.conv1.add_weight_norms()
+        self.conv2.add_weight_norms()
 
     def add_lora_adapters(self, rank: int, alpha: float) -> None:
-        register_parametrization(
-            self.conv1,
-            "weight",
-            ChannelLoRA(self.conv1, rank, alpha),
-        )
-
-        register_parametrization(
-            self.conv2,
-            "weight",
-            ChannelLoRA(self.conv2, rank, alpha),
-        )
+        self.conv1.add_lora_adapters(rank, alpha)
+        self.conv2.add_lora_adapters(rank, alpha)
 
     def forward(self, x: Tensor) -> Tensor:
         z = self.conv1.forward(x)
@@ -431,6 +420,193 @@ class InvertedBottleneck(Module):
         z = self.conv2.forward(z)
 
         return z
+
+
+class MultiscaleAttentionConv2d(Module):
+    def __init__(self, in_channels: int, out_channels: int):
+        super().__init__()
+
+        self.conv1 = DepthwiseSeparableConv2d(
+            in_channels, out_channels, kernel_size=3, padding=1
+        )
+
+        self.conv2 = DepthwiseSeparableConv2d(
+            in_channels, out_channels, kernel_size=7, padding=3
+        )
+
+        self.conv3 = DepthwiseSeparableConv2d(
+            in_channels, out_channels, kernel_size=11, padding=5
+        )
+
+        self.pool = AdaptiveAvgPool2d(1)
+
+        self.flatten = Flatten()
+
+        self.linear1 = Linear(out_channels, 1)
+        self.linear2 = Linear(out_channels, 1)
+        self.linear3 = Linear(out_channels, 1)
+
+    def add_weight_norms(self) -> None:
+        self.conv1.add_weight_norms()
+        self.conv2.add_weight_norms()
+        self.conv3.add_weight_norms()
+
+    def add_lora_adapters(self, rank: int, alpha: float) -> None:
+        self.conv1.add_lora_adapters(rank, alpha)
+        self.conv2.add_lora_adapters(rank, alpha)
+        self.conv3.add_lora_adapters(rank, alpha)
+
+        register_parametrization(
+            self.linear1,
+            "weight",
+            LoRALinear(self.linear1, rank, alpha),
+        )
+
+        register_parametrization(
+            self.linear2,
+            "weight",
+            LoRALinear(self.linear2, rank, alpha),
+        )
+
+        register_parametrization(
+            self.linear3,
+            "weight",
+            LoRALinear(self.linear3, rank, alpha),
+        )
+
+    def forward(self, x: Tensor) -> Tensor:
+        z1 = self.conv1.forward(x)
+
+        w1 = self.pool.forward(z1)
+        w1 = self.flatten.forward(w1)
+        w1 = self.linear1.forward(w1)
+
+        z2 = self.conv2.forward(x)
+
+        w2 = self.pool.forward(z2)
+        w2 = self.flatten.forward(w2)
+        w2 = self.linear2.forward(w2)
+
+        z3 = self.conv3.forward(x)
+
+        w3 = self.pool.forward(z3)
+        w3 = self.flatten.forward(w3)
+        w3 = self.linear3.forward(w3)
+
+        weights = torch.cat([w1, w2, w3], dim=1)
+        weights = torch.softmax(weights, dim=-1)
+
+        w1, w2, w3 = weights.chunk(3, dim=1)
+
+        z1 = z1 * w1.unsqueeze(-1).unsqueeze(-1)
+        z2 = z2 * w2.unsqueeze(-1).unsqueeze(-1)
+        z3 = z3 * w3.unsqueeze(-1).unsqueeze(-1)
+
+        z = z1 + z2 + z3
+
+        return z
+
+
+class DepthwiseSeparableConv2d(Module):
+    """A depth-wise separable convolution layer."""
+
+    def __init__(
+        self, in_channels: int, out_channels: int, kernel_size: int, padding: int
+    ):
+        super().__init__()
+
+        assert in_channels > 0, "Input channels must be greater than 0."
+        assert out_channels > 0, "Output channels must be greater than 0."
+        assert kernel_size > 0, "Kernel size must be greater than 0."
+        assert padding >= 0, "Padding must be non-negative."
+
+        self.depthwise = Conv2d(
+            in_channels,
+            in_channels,
+            kernel_size=kernel_size,
+            padding=padding,
+            groups=in_channels,
+            bias=False,
+        )
+
+        self.pointwise = Conv2d(in_channels, out_channels, kernel_size=1)
+
+    def add_weight_norms(self) -> None:
+        self.depthwise = weight_norm(self.depthwise)
+        self.pointwise = weight_norm(self.pointwise)
+
+    def add_spectral_norms(self) -> None:
+        self.depthwise = spectral_norm(self.depthwise)
+        self.pointwise = spectral_norm(self.pointwise)
+
+    def add_lora_adapters(self, rank: int, alpha: float) -> None:
+        register_parametrization(
+            self.depthwise,
+            "weight",
+            ChannelLoRA(self.depthwise, rank, alpha),
+        )
+
+        register_parametrization(
+            self.pointwise,
+            "weight",
+            ChannelLoRA(self.pointwise, rank, alpha),
+        )
+
+    def forward(self, x: Tensor) -> Tensor:
+        z = self.depthwise.forward(x)
+        z = self.pointwise.forward(z)
+
+        return z
+
+
+class ChannelAttention(Module):
+    """
+    Channel-wise attention mechanism using a squeeze-and-excitation network with
+    pyramidal pooling.
+    """
+
+    def __init__(self, num_channels: int):
+        super().__init__()
+
+        self.squeeze = AdaptiveAvgPool2d(1)
+
+        self.flatten = Flatten()
+
+        hidden_dimensions = num_channels // 4 if num_channels >= 4 else num_channels
+
+        self.exciter = Sequential(
+            Linear(num_channels, hidden_dimensions),
+            SiLU(),
+            Linear(hidden_dimensions, num_channels),
+        )
+
+        self.sigmoid = Sigmoid()
+
+    def add_lora_adapters(self, rank: int, alpha: float) -> None:
+        linear1, _, linear2 = self.exciter
+
+        register_parametrization(
+            linear1,
+            "weight",
+            LoRALinear(linear1, rank, alpha),
+        )
+
+        register_parametrization(
+            linear2,
+            "weight",
+            LoRALinear(linear2, rank, alpha),
+        )
+
+    def forward(self, x: Tensor) -> Tensor:
+        z = self.squeeze.forward(x)
+        z = self.flatten.forward(z)
+        z = self.exciter.forward(z)
+        z = self.sigmoid.forward(z)
+
+        # Reshape to (B, C, 1, 1) for channel broadcasting.
+        z = z.unsqueeze(-1).unsqueeze(-1)
+
+        return x * z
 
 
 class PixelCrush(Module):
@@ -748,6 +924,35 @@ class ChannelLoRA(Module):
         return z
 
 
+class LoRALinear(Module):
+    """Low rank weight decomposition transformation."""
+
+    def __init__(self, linear: Linear, rank: int, alpha: float):
+        super().__init__()
+
+        assert rank > 0, "Rank must be greater than 0."
+        assert alpha > 0.0, "Alpha must be greater than 0."
+
+        out_features, in_features = linear.weight.shape
+
+        lora_a = torch.randn(rank, in_features) / sqrt(rank)
+        lora_b = torch.zeros(out_features, rank)
+
+        self.lora_a = Parameter(lora_a)
+        self.lora_b = Parameter(lora_b)
+
+        self.alpha = alpha
+
+    def forward(self, weight: Tensor) -> Tensor:
+        z = self.lora_b @ self.lora_a
+
+        z *= self.alpha
+
+        z = weight + z
+
+        return z
+
+
 class Bouncer(Module):
     """A critic network for detecting real and fake images for adversarial training."""
 
@@ -1000,54 +1205,6 @@ class DetectorBlock(Module):
         z = self.conv2.forward(z)
 
         z = x + z  # Local residual connection
-
-        return z
-
-
-class DepthwiseSeparableConv2d(Module):
-    """A depth-wise separable convolution layer."""
-
-    def __init__(
-        self, in_channels: int, out_channels: int, kernel_size: int, padding: int
-    ):
-        super().__init__()
-
-        assert in_channels > 0, "Input channels must be greater than 0."
-        assert out_channels > 0, "Output channels must be greater than 0."
-        assert kernel_size > 0, "Kernel size must be greater than 0."
-        assert padding >= 0, "Padding must be non-negative."
-
-        self.depthwise = Conv2d(
-            in_channels,
-            in_channels,
-            kernel_size=kernel_size,
-            padding=padding,
-            groups=in_channels,
-            bias=False,
-        )
-
-        self.pointwise = Conv2d(in_channels, out_channels, kernel_size=1)
-
-    def add_spectral_norms(self) -> None:
-        self.depthwise = spectral_norm(self.depthwise)
-        self.pointwise = spectral_norm(self.pointwise)
-
-    def add_lora_adapters(self, rank: int, alpha: float) -> None:
-        register_parametrization(
-            self.depthwise,
-            "weight",
-            ChannelLoRA(self.depthwise, rank, alpha),
-        )
-
-        register_parametrization(
-            self.pointwise,
-            "weight",
-            ChannelLoRA(self.pointwise, rank, alpha),
-        )
-
-    def forward(self, x: Tensor) -> Tensor:
-        z = self.depthwise.forward(x)
-        z = self.pointwise.forward(z)
 
         return z
 

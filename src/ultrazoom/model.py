@@ -381,6 +381,7 @@ class EncoderBlock(Module):
 
     def add_lora_adapters(self, rank: int, alpha: float) -> None:
         self.stage1.add_lora_adapters(rank, alpha)
+        self.stage2.add_lora_adapters(rank, alpha)
 
     def forward(self, x: Tensor) -> Tensor:
         z = self.stage1.forward(x)
@@ -452,6 +453,13 @@ class AdaptiveResidualConnection(Module):
 
         self.alpha = Parameter(torch.Tensor([1.0]))
 
+    def add_lora_adapters(self, rank: int, alpha: float) -> None:
+        register_parametrization(
+            self.linear,
+            "weight",
+            LoRALinear(self.linear, rank, alpha),
+        )
+
     def forward(self, x: Tensor, z: Tensor) -> Tensor:
         z_avg = self.avg_pool(z)
         z_max = self.max_pool(z)
@@ -463,13 +471,18 @@ class AdaptiveResidualConnection(Module):
         beta = self.linear(z_hat)
         beta = self.sigmoid(beta)
 
-        w = self.alpha * beta
+        alpha = self.sigmoid(self.alpha)
 
-        x_hat = x * w.unsqueeze(-1).unsqueeze(-1)
+        w = alpha * beta
 
-        z_hat = x_hat + z
+        # Reshape weight for broadcasting
+        w = w.view(-1, 1, 1, 1)
 
-        return z_hat
+        x_hat, z_hat = (1 - w) * x, w * z
+
+        out = x_hat + z_hat
+
+        return out
 
 
 class PixelCrush(Module):
@@ -571,6 +584,10 @@ class Decoder(Module):
         self.upsample2 = SubpixelConv2d(secondary_channels, tertiary_channels, 2)
         self.upsample3 = SubpixelConv2d(tertiary_channels, quaternary_channels, 2)
 
+        self.skip1 = AdaptiveResidualConnection(secondary_channels)
+        self.skip2 = AdaptiveResidualConnection(tertiary_channels)
+        self.skip3 = AdaptiveResidualConnection(quaternary_channels)
+
         self.checkpoint = lambda layer, x: layer.forward(x)
 
     def add_weight_norms(self) -> None:
@@ -643,7 +660,7 @@ class Decoder(Module):
 
         z = self.crop_feature_maps(z, x2.shape[2:])
 
-        z = x2 + z  # Regional residual connection
+        z = self.skip1.forward(x2, z)
 
         for layer in self.stage2:
             z = self.checkpoint(layer, z)
@@ -652,7 +669,7 @@ class Decoder(Module):
 
         z = self.crop_feature_maps(z, x3.shape[2:])
 
-        z = x3 + z  # Regional residual connection
+        z = self.skip2.forward(x3, z)
 
         for layer in self.stage3:
             z = self.checkpoint(layer, z)
@@ -661,7 +678,7 @@ class Decoder(Module):
 
         z = self.crop_feature_maps(z, x4.shape[2:])
 
-        z = x4 + z  # Regional residual connection
+        z = self.skip3.forward(x4, z)
 
         for layer in self.stage4:
             z = self.checkpoint(layer, z)

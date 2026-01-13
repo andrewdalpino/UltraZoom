@@ -40,7 +40,10 @@ type FeatureMapSize = tuple[int, int] | list[int]
 
 
 class UltraZoom(Module, PyTorchModelHubMixin):
-    """A U-Net based model for image super-resolution."""
+    """
+    A model for image super-resolution based on a U-Net with adaptive residual
+    connections.
+    """
 
     AVAILABLE_UPSCALE_RATIOS = {2, 4, 8}
 
@@ -137,7 +140,7 @@ class UltraZoom(Module, PyTorchModelHubMixin):
         z = self.unet.forward(z)
         z = self.head.forward(z)
 
-        z = z + s  # Global residual connection
+        z = s + z
 
         return z
 
@@ -381,7 +384,7 @@ class EncoderBlock(Module):
         super().__init__()
 
         self.stage1 = InvertedBottleneck(num_channels, hidden_ratio)
-        self.stage2 = AdaptiveResidualConnection(num_channels)
+        self.stage2 = AdaptiveResidualMix(num_channels)
 
     def add_weight_norms(self) -> None:
         self.stage1.add_weight_norms()
@@ -443,95 +446,6 @@ class InvertedBottleneck(Module):
         return z
 
 
-class AdaptiveResidualConnection(Module):
-    """A module that parametrizes the strength of the incoming residual connection."""
-
-    def __init__(self, num_channels: int):
-        super().__init__()
-
-        self.avg_pool = AdaptiveAvgPool2d(1)
-        self.max_pool = AdaptiveMaxPool2d(1)
-
-        self.flatten = Flatten()
-
-        self.linear = Linear(num_channels * 2, 1)
-
-        self.sigmoid = Sigmoid()
-
-        self.alpha = Parameter(torch.Tensor([1.0]))
-
-    def add_lora_adapters(self, rank: int, alpha: float) -> None:
-        register_parametrization(
-            self.linear,
-            "weight",
-            LoRALinear(self.linear, rank, alpha),
-        )
-
-    def forward(self, x: Tensor, z: Tensor) -> Tensor:
-        z_avg = self.avg_pool(z)
-        z_max = self.max_pool(z)
-
-        z_hat = torch.cat([z_avg, z_max], dim=1)
-
-        z_hat = self.flatten(z_hat)
-
-        beta = self.linear(z_hat)
-        beta = self.sigmoid(beta)
-
-        alpha = self.sigmoid(self.alpha)
-
-        w = alpha * beta
-
-        # Reshape weight for broadcasting
-        w = w.view(-1, 1, 1, 1)
-
-        x_hat, z_hat = (1 - w) * x, w * z
-
-        out = x_hat + z_hat
-
-        return out
-
-
-class PixelCrush(Module):
-    """Downsample the feature maps using strided convolution."""
-
-    def __init__(self, in_channels: int, out_channels: int, crush_factor: int):
-        super().__init__()
-
-        assert in_channels > 0, "Input channels must be greater than 0."
-        assert out_channels > 0, "Output channels must be greater than 0."
-
-        assert crush_factor in {
-            2,
-            3,
-            4,
-        }, "Crush factor must be either 2, 3, or 4."
-
-        self.conv = Conv2d(
-            in_channels,
-            out_channels,
-            kernel_size=crush_factor,
-            stride=crush_factor,
-            bias=False,
-        )
-
-    def add_weight_norms(self) -> None:
-        self.conv = weight_norm(self.conv)
-
-    def add_spectral_norms(self) -> None:
-        self.conv = spectral_norm(self.conv)
-
-    def add_lora_adapters(self, rank: int, alpha: float) -> None:
-        register_parametrization(
-            self.conv,
-            "weight",
-            ChannelLoRA(self.conv, rank, alpha),
-        )
-
-    def forward(self, x: Tensor) -> Tensor:
-        return self.conv(x)
-
-
 class Decoder(Module):
     def __init__(
         self,
@@ -591,9 +505,9 @@ class Decoder(Module):
         self.upsample2 = SubpixelConv2d(secondary_channels, tertiary_channels, 2)
         self.upsample3 = SubpixelConv2d(tertiary_channels, quaternary_channels, 2)
 
-        self.skip1 = AdaptiveResidualConnection(secondary_channels)
-        self.skip2 = AdaptiveResidualConnection(tertiary_channels)
-        self.skip3 = AdaptiveResidualConnection(quaternary_channels)
+        self.skip1 = AdaptiveResidualMix(secondary_channels)
+        self.skip2 = AdaptiveResidualMix(tertiary_channels)
+        self.skip3 = AdaptiveResidualMix(quaternary_channels)
 
         self.checkpoint = lambda layer, x: layer.forward(x)
 
@@ -630,6 +544,10 @@ class Decoder(Module):
         self.upsample1.add_lora_adapters(rank, alpha)
         self.upsample2.add_lora_adapters(rank, alpha)
         self.upsample3.add_lora_adapters(rank, alpha)
+
+        self.skip1.add_lora_adapters(rank, alpha)
+        self.skip2.add_lora_adapters(rank, alpha)
+        self.skip3.add_lora_adapters(rank, alpha)
 
     def enable_activation_checkpointing(self) -> None:
         """
@@ -732,6 +650,46 @@ class DecoderHead(Module):
         z = self.upsample.forward(x)
 
         return z
+
+
+class PixelCrush(Module):
+    """Downsample the feature maps using strided convolution."""
+
+    def __init__(self, in_channels: int, out_channels: int, crush_factor: int):
+        super().__init__()
+
+        assert in_channels > 0, "Input channels must be greater than 0."
+        assert out_channels > 0, "Output channels must be greater than 0."
+
+        assert crush_factor in {
+            2,
+            3,
+            4,
+        }, "Crush factor must be either 2, 3, or 4."
+
+        self.conv = Conv2d(
+            in_channels,
+            out_channels,
+            kernel_size=crush_factor,
+            stride=crush_factor,
+            bias=False,
+        )
+
+    def add_weight_norms(self) -> None:
+        self.conv = weight_norm(self.conv)
+
+    def add_spectral_norms(self) -> None:
+        self.conv = spectral_norm(self.conv)
+
+    def add_lora_adapters(self, rank: int, alpha: float) -> None:
+        register_parametrization(
+            self.conv,
+            "weight",
+            ChannelLoRA(self.conv, rank, alpha),
+        )
+
+    def forward(self, x: Tensor) -> Tensor:
+        return self.conv(x)
 
 
 class SubpixelConv2d(Module):
@@ -991,38 +949,30 @@ class Detector(Module):
             quaternary_layers > 0
         ), "Number of quaternary layers must be greater than 0."
 
-        self.downsample1 = PixelCrush(input_channels, primary_channels, 2)
-
         self.stage1 = Sequential(
             *[DetectorBlock(primary_channels, 4) for _ in range(primary_layers)],
         )
-
-        self.downsample2 = PixelCrush(primary_channels, secondary_channels, 2)
 
         self.stage2 = Sequential(
             *[DetectorBlock(secondary_channels, 4) for _ in range(secondary_layers)],
         )
 
-        self.downsample3 = PixelCrush(secondary_channels, tertiary_channels, 2)
-
         self.stage3 = Sequential(
             *[DetectorBlock(tertiary_channels, 4) for _ in range(tertiary_layers)],
         )
-
-        self.downsample4 = PixelCrush(tertiary_channels, quaternary_channels, 2)
 
         self.stage4 = Sequential(
             *[DetectorBlock(quaternary_channels, 4) for _ in range(quaternary_layers)],
         )
 
+        self.downsample1 = PixelCrush(input_channels, primary_channels, 2)
+        self.downsample2 = PixelCrush(primary_channels, secondary_channels, 2)
+        self.downsample3 = PixelCrush(secondary_channels, tertiary_channels, 2)
+        self.downsample4 = PixelCrush(tertiary_channels, quaternary_channels, 2)
+
         self.checkpoint = lambda layer, x: layer(x)
 
     def add_spectral_norms(self) -> None:
-        self.downsample1.add_spectral_norms()
-        self.downsample2.add_spectral_norms()
-        self.downsample3.add_spectral_norms()
-        self.downsample4.add_spectral_norms()
-
         for layer in self.stage1:
             layer.add_spectral_norms()
 
@@ -1034,6 +984,11 @@ class Detector(Module):
 
         for layer in self.stage4:
             layer.add_spectral_norms()
+
+        self.downsample1.add_spectral_norms()
+        self.downsample2.add_spectral_norms()
+        self.downsample3.add_spectral_norms()
+        self.downsample4.add_spectral_norms()
 
     def enable_activation_checkpointing(self) -> None:
         """
@@ -1081,6 +1036,8 @@ class DetectorBlock(Module):
 
         self.silu = SiLU()
 
+        self.skip = AdaptiveResidualMix(num_channels)
+
     def add_spectral_norms(self) -> None:
         self.conv1.add_spectral_norms()
 
@@ -1091,7 +1048,7 @@ class DetectorBlock(Module):
         z = self.silu.forward(z)
         z = self.conv2.forward(z)
 
-        z = x + z  # Local residual connection
+        z = self.skip.forward(x, z)
 
         return z
 
@@ -1146,6 +1103,55 @@ class DepthwiseSeparableConv2d(Module):
         z = self.pointwise.forward(z)
 
         return z
+
+
+class AdaptiveResidualMix(Module):
+    """A module that parametrizes the strength of the incoming residual connection."""
+
+    def __init__(self, num_channels: int):
+        super().__init__()
+
+        self.avg_pool = AdaptiveAvgPool2d(1)
+        self.max_pool = AdaptiveMaxPool2d(1)
+
+        self.flatten = Flatten()
+
+        self.linear = Linear(num_channels * 2, 1)
+
+        self.sigmoid = Sigmoid()
+
+        self.alpha = Parameter(torch.Tensor([1.0]))
+
+    def add_lora_adapters(self, rank: int, alpha: float) -> None:
+        register_parametrization(
+            self.linear,
+            "weight",
+            LoRALinear(self.linear, rank, alpha),
+        )
+
+    def forward(self, x: Tensor, z: Tensor) -> Tensor:
+        z_avg = self.avg_pool(z)
+        z_max = self.max_pool(z)
+
+        z_hat = torch.cat([z_avg, z_max], dim=1)
+
+        z_hat = self.flatten(z_hat)
+
+        beta = self.linear(z_hat)
+        beta = self.sigmoid(beta)
+
+        alpha = self.sigmoid(self.alpha)
+
+        w = alpha * beta
+
+        # Reshape for broadcasting (B, 1, 1, 1)
+        w = w.view(-1, 1, 1, 1)
+
+        x_hat, z_hat = (1 - w) * x, w * z
+
+        out = x_hat + z_hat
+
+        return out
 
 
 class BinaryClassifier(Module):

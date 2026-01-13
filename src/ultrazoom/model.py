@@ -12,6 +12,7 @@ from torch.nn import (
     Module,
     ModuleList,
     Sequential,
+    Upsample,
     Linear,
     Conv2d,
     SiLU,
@@ -57,6 +58,8 @@ class UltraZoom(Module, PyTorchModelHubMixin):
         hidden_ratio: int,
     ):
         super().__init__()
+
+        self.bicubic = Upsample(scale_factor=upscale_ratio, mode="bicubic")
 
         self.stem = Conv2d(3, primary_channels, kernel_size=1)
 
@@ -128,9 +131,13 @@ class UltraZoom(Module, PyTorchModelHubMixin):
 
         """
 
+        s = self.bicubic.forward(x)
+
         z = self.stem.forward(x)
         z = self.unet.forward(z)
         z = self.head.forward(z)
+
+        z = z + s  # Global residual connection
 
         return z
 

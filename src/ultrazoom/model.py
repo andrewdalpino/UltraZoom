@@ -18,6 +18,7 @@ from torch.nn import (
     Sigmoid,
     PixelShuffle,
     AdaptiveAvgPool2d,
+    AdaptiveMaxPool2d,
     Flatten,
     Parameter,
 )
@@ -373,8 +374,7 @@ class EncoderBlock(Module):
         super().__init__()
 
         self.stage1 = InvertedBottleneck(num_channels, hidden_ratio)
-        self.stage2 = ChannelAttention(num_channels)
-        self.stage3 = SpatialAttention()
+        self.stage2 = AdaptiveResidualConnection(num_channels)
 
     def add_weight_norms(self) -> None:
         self.stage1.add_weight_norms()
@@ -384,10 +384,7 @@ class EncoderBlock(Module):
 
     def forward(self, x: Tensor) -> Tensor:
         z = self.stage1.forward(x)
-        z = self.stage2.forward(z)
-        z = self.stage3.forward(z)
-
-        z = x + z  # Local residual connection
+        z = self.stage2.forward(x, z)
 
         return z
 
@@ -438,118 +435,41 @@ class InvertedBottleneck(Module):
         return z
 
 
-class ChannelAttention(Module):
-    """
-    Channel-wise attention mechanism using a squeeze-and-excitation network with
-    pyramidal pooling.
-    """
-
-    def __init__(self, num_channels: int):
-        super().__init__()
-
-        self.squeeze = AdaptiveAvgPool2d(1)
-
-        self.flatten = Flatten()
-
-        hidden_dimensions = num_channels // 4 if num_channels >= 4 else num_channels
-
-        self.exciter = Sequential(
-            Linear(num_channels, hidden_dimensions),
-            SiLU(),
-            Linear(hidden_dimensions, num_channels),
-        )
-
-        self.sigmoid = Sigmoid()
-
-    def forward(self, x: Tensor) -> Tensor:
-        z = self.squeeze.forward(x)
-        z = self.flatten.forward(z)
-        z = self.exciter.forward(z)
-        z = self.sigmoid.forward(z)
-
-        # Reshape to (B, C, 1, 1) for channel broadcasting.
-        z = z.unsqueeze(-1).unsqueeze(-1)
-
-        return x * z
-
-
-class SpatialAttention(Module):
-    """Spatial attention mechanism using depth-wise convolution."""
-
-    def __init__(self):
-        super().__init__()
-
-        self.avg_pool = ChannelAvgPool2d()
-        self.max_pool = ChannelMaxPool2d()
-
-        self.conv = Conv2d(2, 1, kernel_size=11, padding=5, bias=False)
-
-        self.sigmoid = Sigmoid()
-
-    def forward(self, x: Tensor) -> Tensor:
-        z_avg = self.avg_pool.forward(x)
-        z_max = self.max_pool.forward(x)
-
-        z = torch.cat([z_avg, z_max], dim=1)
-
-        z = self.conv.forward(z)
-        z = self.sigmoid.forward(z)
-
-        return x * z
-
-
-class ChannelAvgPool2d(Module):
-    """A pooling layer that aggregates feature maps along the channel axis."""
-
-    def __init__(self):
-        super().__init__()
-
-    def forward(self, x: Tensor) -> Tensor:
-        z = torch.mean(x, dim=1, keepdim=True)
-
-        return z
-
-
-class ChannelMaxPool2d(Module):
-    """A channel-wise pooling layer that aggregates feature maps based on the maximum value."""
-
-    def __init__(self):
-        super().__init__()
-
-    def forward(self, x: Tensor) -> Tensor:
-        z, _ = torch.max(x, dim=1, keepdim=True)
-
-        return z
-
-
-class HyperConnection(Module):
-    """A hyper connection for adaptive residual learning."""
+class AdaptiveResidualConnection(Module):
+    """A module that parametrizes the strength of the incoming residual connection."""
 
     def __init__(self, num_channels: int):
         super().__init__()
 
         self.avg_pool = AdaptiveAvgPool2d(1)
+        self.max_pool = AdaptiveMaxPool2d(1)
 
         self.flatten = Flatten()
 
-        self.linear = Linear(num_channels, 1)
+        self.linear = Linear(num_channels * 2, 1)
 
         self.sigmoid = Sigmoid()
 
-        self.alpha = Parameter(torch.Tensor(1.0))
+        self.alpha = Parameter(torch.Tensor([1.0]))
 
-    def forward(self, x: Tensor, z_hat: Tensor) -> Tensor:
-        z = self.avg_pool(z_hat)
+    def forward(self, x: Tensor, z: Tensor) -> Tensor:
+        z_avg = self.avg_pool(z)
+        z_max = self.max_pool(z)
 
-        z = self.flatten(z)
-        z = self.linear(z)
-        z = self.sigmoid(z)
+        z_hat = torch.cat([z_avg, z_max], dim=1)
 
-        z = self.alpha * z_hat
+        z_hat = self.flatten(z_hat)
 
-        z = x + z
+        beta = self.linear(z_hat)
+        beta = self.sigmoid(beta)
 
-        return z
+        w = self.alpha * beta
+
+        x_hat = x * w.unsqueeze(-1).unsqueeze(-1)
+
+        z_hat = x_hat + z
+
+        return z_hat
 
 
 class PixelCrush(Module):

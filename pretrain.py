@@ -188,18 +188,17 @@ def main():
 
     model.add_weight_norms()
 
+    model = torch.compile(model)
+
     model = model.to(args.device)
 
     l2_loss_function = MSELoss()
     vgg_loss_function = VGGLoss().to(args.device)
 
-    print("Compiling models")
-
-    model = torch.compile(model)
     vgg_loss_function = torch.compile(vgg_loss_function)
 
-    print(f"Upscaler has {model.num_trainable_params:,} trainable parameters")
-    print(f"Embedder has {vgg_loss_function.num_params:,} parameters")
+    print(f"Model has {model.num_trainable_params:,} trainable parameters")
+    print(f"Loss function has {vgg_loss_function.num_params:,} parameters")
 
     optimizer = AdamW(model.parameters(), lr=args.learning_rate)
 

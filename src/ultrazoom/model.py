@@ -82,6 +82,8 @@ class UltraZoom(Module, PyTorchModelHubMixin):
 
         self.head = DecoderHead(primary_channels, upscale_ratio)
 
+        self.skip = AdaptiveResidualMix(3)
+
         self.upscale_ratio = upscale_ratio
 
     @property
@@ -142,7 +144,7 @@ class UltraZoom(Module, PyTorchModelHubMixin):
         z = self.unet.forward(z)
         z = self.head.forward(z)
 
-        z = s + z
+        z = self.skip.forward(s, z)
 
         return z
 
@@ -394,6 +396,7 @@ class EncoderBlock(Module):
 
     def add_weight_norms(self) -> None:
         self.stage1.add_weight_norms()
+        self.stage2.add_weight_norms()
 
     def add_lora_adapters(self, rank: int, alpha: float) -> None:
         self.stage1.add_lora_adapters(rank, alpha)
@@ -1022,7 +1025,7 @@ class DetectorBlock(Module):
 
 
 class AdaptiveResidualMix(Module):
-    """A hyper-connection module that parametrizes the strength of the incoming residual connection."""
+    """A hyper-connection module that mixes the input with the residual feature map."""
 
     def __init__(self, num_channels: int):
         super().__init__()
@@ -1036,6 +1039,11 @@ class AdaptiveResidualMix(Module):
         self.sigmoid = Sigmoid()
 
         self.alpha = Parameter(torch.Tensor([0.3]))
+
+    def add_weight_norms(self) -> None:
+        self.conv1.add_weight_norms()
+
+        self.conv2 = weight_norm(self.conv2)
 
     def add_lora_adapters(self, rank: int, alpha: float) -> None:
         self.conv1.add_lora_adapters(rank, alpha)

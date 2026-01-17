@@ -105,7 +105,7 @@ class UltraZoom(Module, PyTorchModelHubMixin):
         self.head.add_weight_norms()
 
     def add_lora_adapters(self, rank: int, alpha: float) -> None:
-        """Add LoRA adapters to all convolutional layers in the network."""
+        """Add LoRA adapters to all layers in the network."""
 
         self.unet.add_lora_adapters(rank, alpha)
 
@@ -178,6 +178,10 @@ class ONNXModel(Module):
 
 
 class UNet(Module):
+    """
+    An encoder/decoder network with adaptive residual connections.
+    """
+
     def __init__(
         self,
         primary_channels: int,
@@ -713,7 +717,7 @@ class SubpixelConv2d(Module):
             in_channels,
             out_channels,
             kernel_size=3,
-            stride=1,  # Effective stride will be 1 / upscale_ratio
+            stride=1,  # Effective stride will be 1 / upscale_ratio.
             padding=1,
             bias=False,
         )
@@ -733,67 +737,6 @@ class SubpixelConv2d(Module):
     def forward(self, x: Tensor) -> Tensor:
         z = self.conv.forward(x)
         z = self.shuffle.forward(z)
-
-        return z
-
-
-class ChannelLoRA(Module):
-    """Low rank channel decomposition transformation."""
-
-    def __init__(self, layer: Conv2d, rank: int, alpha: float):
-        super().__init__()
-
-        assert rank > 0, "Rank must be greater than 0."
-        assert alpha > 0.0, "Alpha must be greater than 0."
-
-        out_channels, in_channels, h, w = layer.weight.shape
-
-        lora_a = torch.randn(h, w, out_channels, rank) / sqrt(rank)
-        lora_b = torch.zeros(h, w, rank, in_channels)
-
-        self.lora_a = Parameter(lora_a)
-        self.lora_b = Parameter(lora_b)
-
-        self.alpha = alpha
-
-    def forward(self, weight: Tensor) -> Tensor:
-        z = self.lora_a @ self.lora_b
-
-        z *= self.alpha
-
-        # Move channels to front to match weight shape
-        z = z.permute(2, 3, 0, 1)
-
-        z = weight + z
-
-        return z
-
-
-class LoRALinear(Module):
-    """Low rank weight decomposition transformation."""
-
-    def __init__(self, linear: Linear, rank: int, alpha: float):
-        super().__init__()
-
-        assert rank > 0, "Rank must be greater than 0."
-        assert alpha > 0.0, "Alpha must be greater than 0."
-
-        out_features, in_features = linear.weight.shape
-
-        lora_a = torch.randn(rank, in_features) / sqrt(rank)
-        lora_b = torch.zeros(out_features, rank)
-
-        self.lora_a = Parameter(lora_a)
-        self.lora_b = Parameter(lora_b)
-
-        self.alpha = alpha
-
-    def forward(self, weight: Tensor) -> Tensor:
-        z = self.lora_b @ self.lora_a
-
-        z *= self.alpha
-
-        z = weight + z
 
         return z
 
@@ -1106,7 +1049,7 @@ class DepthwiseSeparableConv2d(Module):
 
 
 class AdaptiveResidualMix(Module):
-    """A module that parametrizes the strength of the incoming residual connection."""
+    """A hyper-connection module that parametrizes the strength of the incoming residual connection."""
 
     def __init__(self, num_channels: int):
         super().__init__()
@@ -1114,9 +1057,7 @@ class AdaptiveResidualMix(Module):
         self.avg_pool = AdaptiveAvgPool2d(1)
         self.max_pool = AdaptiveMaxPool2d(1)
 
-        self.flatten = Flatten()
-
-        self.linear = Linear(num_channels * 2, 1)
+        self.conv = Conv2d(2 * num_channels, 1, kernel_size=1)
 
         self.sigmoid = Sigmoid()
 
@@ -1124,9 +1065,9 @@ class AdaptiveResidualMix(Module):
 
     def add_lora_adapters(self, rank: int, alpha: float) -> None:
         register_parametrization(
-            self.linear,
+            self.conv,
             "weight",
-            LoRALinear(self.linear, rank, alpha),
+            ChannelLoRA(self.conv, rank, alpha),
         )
 
     def forward(self, x: Tensor, z: Tensor) -> Tensor:
@@ -1135,17 +1076,12 @@ class AdaptiveResidualMix(Module):
 
         z_hat = torch.cat([z_avg, z_max], dim=1)
 
-        z_hat = self.flatten(z_hat)
-
-        beta = self.linear(z_hat)
+        beta = self.conv(z_hat)
         beta = self.sigmoid(beta)
 
         alpha = self.sigmoid(self.alpha)
 
         w = alpha * beta
-
-        # Reshape for broadcasting (B, 1, 1, 1)
-        w = w.view(-1, 1, 1, 1)
 
         x_hat, z_hat = (1 - w) * x, w * z
 
@@ -1164,5 +1100,37 @@ class BinaryClassifier(Module):
 
     def forward(self, x: Tensor) -> Tensor:
         z = self.linear.forward(x)
+
+        return z
+
+
+class ChannelLoRA(Module):
+    """Low rank channel decomposition transformation."""
+
+    def __init__(self, layer: Conv2d, rank: int, alpha: float):
+        super().__init__()
+
+        assert rank > 0, "Rank must be greater than 0."
+        assert alpha > 0.0, "Alpha must be greater than 0."
+
+        out_channels, in_channels, h, w = layer.weight.shape
+
+        lora_a = torch.randn(h, w, out_channels, rank) / sqrt(rank)
+        lora_b = torch.zeros(h, w, rank, in_channels)
+
+        self.lora_a = Parameter(lora_a)
+        self.lora_b = Parameter(lora_b)
+
+        self.alpha = alpha
+
+    def forward(self, weight: Tensor) -> Tensor:
+        z = self.lora_a @ self.lora_b
+
+        z *= self.alpha
+
+        # Move channels to front to match weight shape.
+        z = z.permute(2, 3, 0, 1)
+
+        z = weight + z
 
         return z

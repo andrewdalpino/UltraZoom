@@ -718,10 +718,17 @@ class TestAdaptiveResidualMix(BaseModelTest):
 
     def test_initialization(self):
         """Test that the module initializes correctly."""
-        self.assertIsInstance(self.module.conv, torch.nn.Conv2d)
-        self.assertEqual(self.module.conv.in_channels, 2 * self.num_channels)
-        self.assertEqual(self.module.conv.out_channels, 1)
-        self.assertEqual(self.module.conv.kernel_size, (1, 1))
+        from src.ultrazoom.model import DepthwiseSeparableConv2d
+
+        self.assertIsInstance(self.module.conv1, DepthwiseSeparableConv2d)
+        self.assertEqual(self.module.conv1.depthwise.in_channels, self.num_channels)
+        self.assertEqual(self.module.conv1.pointwise.out_channels, self.num_channels)
+        self.assertEqual(self.module.conv1.depthwise.kernel_size, (7, 7))
+
+        self.assertIsInstance(self.module.conv2, torch.nn.Conv2d)
+        self.assertEqual(self.module.conv2.in_channels, 2 * self.num_channels)
+        self.assertEqual(self.module.conv2.out_channels, 1)
+        self.assertEqual(self.module.conv2.kernel_size, (1, 1))
 
     def test_forward_output_shape(self):
         """Test that forward pass produces correct output shape."""
@@ -737,20 +744,28 @@ class TestAdaptiveResidualMix(BaseModelTest):
 
     def test_parameter_count(self):
         """Test that parameter count matches expectation."""
-        # Conv2d(2*C, 1, 1): (2*C)*1*1*1 + 1 bias = 2*C + 1 parameters
-        # Plus 1 for the alpha parameter = 2*C + 2 parameters
-        expected_params = 2 * self.num_channels + 2
+        # For AdaptiveResidualMix with C channels:
+        # conv1 (DepthwiseSeparableConv2d):
+        #   - depthwise: Conv2d(C, C, 7x7, groups=C, bias=False): C*7*7 = 49*C parameters
+        #   - pointwise: Conv2d(C, C, 1x1): C*C + C bias = C² + C parameters
+        # conv2: Conv2d(2*C, 1, 1x1): 2*C + 1 bias = 2*C + 1 parameters
+        # Plus 1 for the alpha parameter = 49*C + C² + C + 2*C + 1 + 1 = C² + 52*C + 2 parameters
+        expected_params = (
+            self.num_channels * self.num_channels + 52 * self.num_channels + 2
+        )
         actual_params = sum(p.numel() for p in self.module.parameters())
         self.assertEqual(actual_params, expected_params)
 
-    def test_lora_adapters(self):
-        """Test that LoRA adapters can be added successfully."""
-        rank = 4
-        alpha = 8.0
-        self.module.add_lora_adapters(rank, alpha)
 
-        # Check that parametrization is registered
-        self.assertTrue(is_parametrized(self.module.conv, "weight"))
+def test_lora_adapters(self):
+    """Test that LoRA adapters can be added successfully."""
+    rank = 4
+    alpha = 8.0
+    self.module.add_lora_adapters(rank, alpha)
+
+    # Check that parametrizations are registered for both convolutions
+    self.assertTrue(is_parametrized(self.module.conv1, "weight"))
+    self.assertTrue(is_parametrized(self.module.conv2, "weight"))
 
 
 if __name__ == "__main__":

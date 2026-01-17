@@ -24,6 +24,8 @@ from torch.nn import (
     Parameter,
 )
 
+from torch.nn.functional import pad
+
 from torch.nn.utils.parametrize import (
     register_parametrization,
     is_parametrized,
@@ -564,20 +566,43 @@ class Decoder(Module):
     @staticmethod
     def crop_feature_maps(x: Tensor, size: FeatureMapSize) -> Tensor:
         """
-        Center-crop the feature maps to the target size. This is sometimes necessary
-        due to rounding during down/upsampling operations.
+        Center-crop or pad the feature maps to the target size. This is sometimes
+        necessary due to rounding during down/upsampling operations.
         """
+
         _, _, h, w = x.shape
 
         target_h, target_w = size
 
-        start_h = (h - target_h) // 2
-        end_h = start_h + target_h
+        if h > target_h:
+            start_h = (h - target_h) // 2
+            end_h = start_h + target_h
 
-        start_w = (w - target_w) // 2
-        end_w = start_w + target_w
+            x = x[:, :, start_h:end_h, :]
 
-        return x[:, :, start_h:end_h, start_w:end_w]
+        elif h < target_h:
+            pad_h = target_h - h
+
+            pad_top = pad_h // 2
+            pad_bottom = pad_h - pad_top
+
+            x = pad(x, (0, 0, pad_top, pad_bottom))
+
+        if w > target_w:
+            start_w = (w - target_w) // 2
+            end_w = start_w + target_w
+
+            x = x[:, :, :, start_w:end_w]
+
+        elif w < target_w:
+            pad_w = target_w - w
+
+            pad_left = pad_w // 2
+            pad_right = pad_w - pad_left
+
+            x = pad(x, (pad_left, pad_right, 0, 0))
+
+        return x
 
     def forward(self, x1: Tensor, x2: Tensor, x3: Tensor, x4: Tensor) -> Tensor:
         z = x1
@@ -996,6 +1021,55 @@ class DetectorBlock(Module):
         return z
 
 
+class AdaptiveResidualMix(Module):
+    """A hyper-connection module that parametrizes the strength of the incoming residual connection."""
+
+    def __init__(self, num_channels: int):
+        super().__init__()
+
+        self.conv1 = DepthwiseSeparableConv2d(
+            num_channels, num_channels, kernel_size=7, padding=3
+        )
+
+        self.conv2 = Conv2d(2 * num_channels, 1, kernel_size=1)
+
+        self.sigmoid = Sigmoid()
+
+        self.alpha = Parameter(torch.Tensor([0.3]))
+
+    def add_lora_adapters(self, rank: int, alpha: float) -> None:
+        self.conv1.add_lora_adapters(rank, alpha)
+
+        register_parametrization(
+            self.conv2,
+            "weight",
+            ChannelLoRA(self.conv2, rank, alpha),
+        )
+
+    def forward(self, x: Tensor, z: Tensor) -> Tensor:
+        z_hat = self.conv1.forward(z)
+
+        z_hat = self.sigmoid(z_hat)
+
+        z_hat = z * z_hat
+
+        x_hat = torch.cat([x, z_hat], dim=1)
+
+        beta = self.conv2.forward(x_hat)
+
+        beta = self.sigmoid.forward(beta)
+
+        alpha = self.sigmoid(self.alpha)
+
+        mix = alpha * beta
+
+        x_hat, z_hat = (1 - mix) * x, mix * z_hat
+
+        z = x_hat + z_hat
+
+        return z
+
+
 class DepthwiseSeparableConv2d(Module):
     """A depth-wise separable convolution layer."""
 
@@ -1046,48 +1120,6 @@ class DepthwiseSeparableConv2d(Module):
         z = self.pointwise.forward(z)
 
         return z
-
-
-class AdaptiveResidualMix(Module):
-    """A hyper-connection module that parametrizes the strength of the incoming residual connection."""
-
-    def __init__(self, num_channels: int):
-        super().__init__()
-
-        self.avg_pool = AdaptiveAvgPool2d(1)
-        self.max_pool = AdaptiveMaxPool2d(1)
-
-        self.conv = Conv2d(2 * num_channels, 1, kernel_size=1)
-
-        self.sigmoid = Sigmoid()
-
-        self.alpha = Parameter(torch.Tensor([1.0]))
-
-    def add_lora_adapters(self, rank: int, alpha: float) -> None:
-        register_parametrization(
-            self.conv,
-            "weight",
-            ChannelLoRA(self.conv, rank, alpha),
-        )
-
-    def forward(self, x: Tensor, z: Tensor) -> Tensor:
-        z_avg = self.avg_pool(z)
-        z_max = self.max_pool(z)
-
-        z_hat = torch.cat([z_avg, z_max], dim=1)
-
-        beta = self.conv(z_hat)
-        beta = self.sigmoid(beta)
-
-        alpha = self.sigmoid(self.alpha)
-
-        w = alpha * beta
-
-        x_hat, z_hat = (1 - w) * x, w * z
-
-        out = x_hat + z_hat
-
-        return out
 
 
 class BinaryClassifier(Module):

@@ -19,7 +19,6 @@ from torch.nn import (
     Sigmoid,
     PixelShuffle,
     AdaptiveAvgPool2d,
-    AdaptiveMaxPool2d,
     Flatten,
     Parameter,
 )

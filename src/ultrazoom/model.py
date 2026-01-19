@@ -13,7 +13,6 @@ from torch.nn import (
     ModuleList,
     Sequential,
     Upsample,
-    Linear,
     Conv2d,
     SiLU,
     Sigmoid,
@@ -65,7 +64,7 @@ class UltraZoom(Module, PyTorchModelHubMixin):
 
         self.bicubic = Upsample(scale_factor=upscale_ratio, mode="bicubic")
 
-        self.stem = Conv2d(3, primary_channels, kernel_size=1)
+        self.stem = FanOutProjection(3, primary_channels)
 
         self.unet = UNet(
             primary_channels,
@@ -104,13 +103,18 @@ class UltraZoom(Module, PyTorchModelHubMixin):
     def add_weight_norms(self) -> None:
         """Add weight normalization parameterization to the network."""
 
+        self.stem.add_weight_norms()
         self.unet.add_weight_norms()
         self.head.add_weight_norms()
+        self.skip.add_weight_norms()
 
     def add_lora_adapters(self, rank: int, alpha: float) -> None:
         """Add LoRA adapters to all layers in the network."""
 
+        self.stem.add_lora_adapters(rank, alpha)
         self.unet.add_lora_adapters(rank, alpha)
+        self.head.add_lora_adapters(rank, alpha)
+        self.skip.add_lora_adapters(rank, alpha)
 
     def remove_parameterizations(self) -> None:
         """Remove all network parameterizations."""
@@ -178,6 +182,36 @@ class ONNXModel(Module):
         """
 
         return self.model.upscale(x)
+
+
+class FanOutProjection(Module):
+    """A linear projection for expanding the number of channels."""
+
+    def __init__(self, in_channels: int, out_channels: int):
+        super().__init__()
+
+        assert in_channels > 0, "Input channels must be greater than 0."
+
+        assert (
+            in_channels < out_channels
+        ), "Output channels must be greater than input channels."
+
+        self.conv = Conv2d(in_channels, out_channels, kernel_size=1)
+
+    def add_weight_norms(self) -> None:
+        self.conv = weight_norm(self.conv)
+
+    def add_lora_adapters(self, rank: int, alpha: float) -> None:
+        register_parametrization(
+            self.conv,
+            "weight",
+            ChannelLoRA(self.conv, rank, alpha),
+        )
+
+    def forward(self, x: Tensor) -> Tensor:
+        z = self.conv.forward(x)
+
+        return z
 
 
 class UNet(Module):
@@ -845,10 +879,6 @@ class Bouncer(Module):
             quaternary_layers,
         )
 
-        self.pool = AdaptiveAvgPool2d(1)
-
-        self.flatten = Flatten(start_dim=1)
-
         self.classifier = BinaryClassifier(quaternary_channels)
 
     @property
@@ -873,19 +903,17 @@ class Bouncer(Module):
     def forward(self, x: Tensor) -> tuple[Tensor, ...]:
         z1, z2, z3, z4 = self.detector.forward(x)
 
-        z = self.pool.forward(z4)
-        z = self.flatten.forward(z)
-        z = self.classifier.forward(z)
+        z5 = self.classifier.forward(z4)
 
-        return z1, z2, z3, z4, z
+        return z1, z2, z3, z4, z5
 
     @torch.no_grad()
     def predict(self, x: Tensor) -> Tensor:
         """Return the probability that the input image is real or fake."""
 
-        _, _, _, _, z = self.forward(x)
+        _, _, _, _, z5 = self.forward(x)
 
-        return z
+        return z5
 
 
 class Detector(Module):
@@ -1024,53 +1052,39 @@ class DetectorBlock(Module):
 
 
 class AdaptiveResidualMix(Module):
-    """A hyper-connection module that mixes the input with the residual feature map."""
+    """
+    A hyper-connection that adaptively mixes the input with the residual feature maps.
+    """
 
     def __init__(self, num_channels: int):
         super().__init__()
 
-        self.conv1 = DepthwiseSeparableConv2d(
-            num_channels, num_channels, kernel_size=7, padding=3
+        self.conv = DepthwiseSeparableConv2d(
+            2 * num_channels, 1, kernel_size=7, padding=3
         )
 
-        self.conv2 = Conv2d(2 * num_channels, 1, kernel_size=1)
+        self.beta = Parameter(torch.Tensor([0.3]))
 
         self.sigmoid = Sigmoid()
 
-        self.alpha = Parameter(torch.Tensor([0.3]))
-
     def add_weight_norms(self) -> None:
-        self.conv1.add_weight_norms()
-
-        self.conv2 = weight_norm(self.conv2)
+        self.conv.add_weight_norms()
 
     def add_lora_adapters(self, rank: int, alpha: float) -> None:
-        self.conv1.add_lora_adapters(rank, alpha)
-
-        register_parametrization(
-            self.conv2,
-            "weight",
-            ChannelLoRA(self.conv2, rank, alpha),
-        )
+        self.conv.add_lora_adapters(rank, alpha)
 
     def forward(self, x: Tensor, z: Tensor) -> Tensor:
-        z_hat = self.conv1.forward(z)
+        xz = torch.cat([x, z], dim=1)
 
-        z_hat = self.sigmoid(z_hat)
+        alpha = self.conv.forward(xz)
+        alpha = self.sigmoid.forward(alpha)
 
-        z_hat = z * z_hat
+        # Beta scalar allows learnable identity mapping.
+        beta = self.sigmoid.forward(self.beta)
 
-        x_hat = torch.cat([x, z_hat], dim=1)
+        w = alpha * beta
 
-        beta = self.conv2.forward(x_hat)
-
-        beta = self.sigmoid.forward(beta)
-
-        alpha = self.sigmoid(self.alpha)
-
-        mix = alpha * beta
-
-        x_hat, z_hat = (1 - mix) * x, mix * z_hat
+        x_hat, z_hat = (1 - w) * x, w * z
 
         z = x_hat + z_hat
 
@@ -1130,15 +1144,25 @@ class DepthwiseSeparableConv2d(Module):
 
 
 class BinaryClassifier(Module):
-    """A simple single-layer binary classification head to preserve positional invariance."""
+    """A simple binary classification head that preserves positional invariance."""
 
-    def __init__(self, input_features: int):
+    def __init__(self, num_channels: int):
         super().__init__()
 
-        self.linear = Linear(input_features, 1)
+        self.conv = Conv2d(num_channels, 1, kernel_size=1)
+
+        self.pool = AdaptiveAvgPool2d(1)
+
+        self.flatten = Flatten(start_dim=1)
+
+    def add_spectral_norms(self) -> None:
+        self.conv = spectral_norm(self.conv)
 
     def forward(self, x: Tensor) -> Tensor:
-        z = self.linear.forward(x)
+        z = self.conv.forward(x)
+        z = self.pool.forward(z)
+
+        z = self.flatten.forward(z)
 
         return z
 
@@ -1162,7 +1186,7 @@ class ChannelLoRA(Module):
 
         self.alpha = alpha
 
-    def forward(self, weight: Tensor) -> Tensor:
+    def forward(self, w: Tensor) -> Tensor:
         z = self.lora_a @ self.lora_b
 
         z *= self.alpha
@@ -1170,6 +1194,6 @@ class ChannelLoRA(Module):
         # Move channels to front to match weight shape.
         z = z.permute(2, 3, 0, 1)
 
-        z = weight + z
+        z = w + z
 
         return z

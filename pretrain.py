@@ -112,7 +112,7 @@ def main():
     if "mps" in args.device and not mps_is_available():
         raise RuntimeError("MPS is not available.")
 
-    torch.set_float32_matmul_precision("high")
+    torch.backends.cudnn.conv.fp32_precision = "tf32"
 
     dtype = (
         torch.bfloat16

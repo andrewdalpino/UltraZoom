@@ -879,7 +879,7 @@ class Bouncer(Module):
             quaternary_layers,
         )
 
-        self.classifier = BinaryClassifier(quaternary_channels)
+        self.head = BinaryClassifier(quaternary_channels)
 
     @property
     def num_trainable_params(self) -> int:
@@ -889,6 +889,7 @@ class Bouncer(Module):
         """Add spectral normalization to the network."""
 
         self.detector.add_spectral_norms()
+        self.head.add_spectral_norms()
 
     def remove_parameterizations(self) -> None:
         """Remove all parameterizations."""
@@ -903,7 +904,7 @@ class Bouncer(Module):
     def forward(self, x: Tensor) -> tuple[Tensor, ...]:
         z1, z2, z3, z4 = self.detector.forward(x)
 
-        z5 = self.classifier.forward(z4)
+        z5 = self.head.forward(z4)
 
         return z1, z2, z3, z4, z5
 
@@ -1024,17 +1025,14 @@ class DetectorBlock(Module):
         hidden_channels = hidden_ratio * num_channels
 
         self.conv1 = DepthwiseSeparableConv2d(
-            num_channels,
-            hidden_channels,
-            kernel_size=7,
-            padding=3,
+            num_channels, hidden_channels, kernel_size=7, padding=3
         )
 
         self.conv2 = Conv2d(hidden_channels, num_channels, kernel_size=1)
 
-        self.silu = SiLU()
-
         self.skip = AdaptiveResidualMix(num_channels)
+
+        self.silu = SiLU()
 
     def add_spectral_norms(self) -> None:
         self.conv1.add_spectral_norms()
@@ -1059,28 +1057,30 @@ class AdaptiveResidualMix(Module):
     def __init__(self, num_channels: int):
         super().__init__()
 
-        self.conv = DepthwiseSeparableConv2d(
-            2 * num_channels, 1, kernel_size=7, padding=3
-        )
+        self.conv = Conv2d(2 * num_channels, 1, kernel_size=3, padding=1)
 
-        self.beta = Parameter(torch.Tensor([0.3]))
+        self.alpha = Parameter(torch.Tensor([0.3]))
 
         self.sigmoid = Sigmoid()
 
     def add_weight_norms(self) -> None:
-        self.conv.add_weight_norms()
+        self.conv = weight_norm(self.conv)
 
     def add_lora_adapters(self, rank: int, alpha: float) -> None:
-        self.conv.add_lora_adapters(rank, alpha)
+        register_parametrization(
+            self.conv,
+            "weight",
+            ChannelLoRA(self.conv, rank, alpha),
+        )
 
     def forward(self, x: Tensor, z: Tensor) -> Tensor:
         xz = torch.cat([x, z], dim=1)
 
-        alpha = self.conv.forward(xz)
-        alpha = self.sigmoid.forward(alpha)
+        beta = self.conv.forward(xz)
+        beta = self.sigmoid.forward(beta)
 
-        # Beta scalar allows learnable identity mapping.
-        beta = self.sigmoid.forward(self.beta)
+        # Alpha scalar allows learnable identity mapping.
+        alpha = self.sigmoid.forward(self.alpha)
 
         w = alpha * beta
 
@@ -1149,9 +1149,9 @@ class BinaryClassifier(Module):
     def __init__(self, num_channels: int):
         super().__init__()
 
-        self.conv = Conv2d(num_channels, 1, kernel_size=1)
-
         self.pool = AdaptiveAvgPool2d(1)
+
+        self.conv = Conv2d(num_channels, 1, kernel_size=1)
 
         self.flatten = Flatten(start_dim=1)
 
@@ -1159,8 +1159,8 @@ class BinaryClassifier(Module):
         self.conv = spectral_norm(self.conv)
 
     def forward(self, x: Tensor) -> Tensor:
-        z = self.conv.forward(x)
-        z = self.pool.forward(z)
+        z = self.pool.forward(x)
+        z = self.conv.forward(z)
 
         z = self.flatten.forward(z)
 

@@ -9,7 +9,7 @@ import torch
 from torch.utils.data import DataLoader
 from torch.nn import MSELoss
 from torch.nn.utils import clip_grad_norm_
-from torch.optim import AdamW
+from torch.optim import AdamW, SGD
 from torch.amp import autocast
 from torch.cuda import is_available as cuda_is_available, is_bf16_supported
 from torch.backends.mps import is_available as mps_is_available
@@ -33,7 +33,7 @@ from torchmetrics.classification import BinaryPrecision, BinaryRecall
 
 from data import ImageFolder
 from src.ultrazoom.model import UltraZoom, Bouncer
-from loss import RelativisticBCELoss
+from loss import RelativisticBCELoss, AdaptiveMultitaskLoss
 
 from tqdm import tqdm
 
@@ -67,6 +67,7 @@ def main():
     parser.add_argument(
         "--critic_model_size", default="small", choices=Bouncer.AVAILABLE_MODEL_SIZES
     )
+    parser.add_argument("--adaptive_loss_learning_rate", default=1e-3, type=float)
     parser.add_argument("--activation_checkpointing", action="store_true")
     parser.add_argument("--eval_interval", default=2, type=int)
     parser.add_argument("--checkpoint_interval", default=2, type=int)
@@ -176,7 +177,7 @@ def main():
 
     upscaler.add_weight_norms()
 
-    state_dict = checkpoint["model"]
+    state_dict = checkpoint["upscaler"]
 
     # Compensate for compiled state dict.
     for key in list(state_dict.keys()):
@@ -202,8 +203,14 @@ def main():
     stage_1_l2_loss = MSELoss()
     bce_loss = RelativisticBCELoss()
 
+    combined_loss_function = AdaptiveMultitaskLoss(num_losses=3).to(args.device)
+
     upscaler_optimizer = AdamW(upscaler.parameters(), lr=args.upscaler_learning_rate)
     critic_optimizer = AdamW(critic.parameters(), lr=args.critic_learning_rate)
+
+    combined_loss_optimizer = SGD(
+        combined_loss_function.parameters(), lr=args.adaptive_loss_learning_rate
+    )
 
     starting_epoch = 1
 
@@ -212,11 +219,13 @@ def main():
             args.checkpoint_path, map_location=args.device, weights_only=True
         )
 
-        upscaler.load_state_dict(checkpoint["model"])
-        upscaler_optimizer.load_state_dict(checkpoint["model_optimizer"])
+        upscaler.load_state_dict(checkpoint["upscaler"])
+        upscaler_optimizer.load_state_dict(checkpoint["upscaler_optimizer"])
 
         critic.load_state_dict(checkpoint["critic"])
         critic_optimizer.load_state_dict(checkpoint["critic_optimizer"])
+
+        combined_loss_function.load_state_dict(checkpoint["combined_loss"])
 
         starting_epoch += checkpoint["epoch"]
 
@@ -298,10 +307,8 @@ def main():
 
                     u_bce = bce_loss.forward(c_pred_real, c_pred_fake, y_fake, y_real)
 
-                    combined_u_loss = (
-                        pixel_l2 / pixel_l2.detach()
-                        + u_stage_1_l2 / u_stage_1_l2.detach()
-                        + u_bce / u_bce.detach()
+                    combined_u_loss = combined_loss_function.forward(
+                        torch.stack([pixel_l2, u_stage_1_l2, u_bce])
                     )
 
                     scaled_u_loss = combined_u_loss / args.gradient_accumulation_steps
@@ -314,8 +321,10 @@ def main():
                     )
 
                     upscaler_optimizer.step()
+                    combined_loss_optimizer.step()
 
                     upscaler_optimizer.zero_grad()
+                    combined_loss_optimizer.zero_grad()
 
                     total_u_gradient_norm += u_norm.item()
 
@@ -339,6 +348,7 @@ def main():
         logger.add_scalar("Upscaler Norm", average_u_gradient_norm, epoch)
         logger.add_scalar("Critic BCE", average_c_bce, epoch)
         logger.add_scalar("Critic Norm", average_c_gradient_norm, epoch)
+        logger.add_tensor("Loss Weights", combined_loss_function.loss_weights, epoch)
 
         print(
             f"Epoch {epoch}:",
@@ -417,12 +427,14 @@ def main():
         if epoch % args.checkpoint_interval == 0:
             checkpoint = {
                 "epoch": epoch,
-                "model_args": upscaler_args,
-                "model": upscaler.state_dict(),
-                "model_optimizer": upscaler_optimizer.state_dict(),
+                "upscaler_args": upscaler_args,
+                "upscaler": upscaler.state_dict(),
+                "upscaler_optimizer": upscaler_optimizer.state_dict(),
                 "critic_args": critic_args,
                 "critic": critic.state_dict(),
                 "critic_optimizer": critic_optimizer.state_dict(),
+                "combined_loss": combined_loss_function.state_dict(),
+                "combined_loss_optimizer": combined_loss_optimizer.state_dict(),
             }
 
             torch.save(checkpoint, args.checkpoint_path)

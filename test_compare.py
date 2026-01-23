@@ -31,12 +31,11 @@ def main():
 
     checkpoint = torch.load(args.checkpoint_path, map_location="cpu", weights_only=True)
 
-    model = UltraZoom(**checkpoint["model_args"])
+    model = UltraZoom(**checkpoint["upscaler_args"])
 
     model.add_weight_norms()
 
-    state_dict = checkpoint["model"]
-
+    state_dict = checkpoint["upscaler"]
     # Compensate for compiled state dict.
     for key in list(state_dict.keys()):
         state_dict[key.replace("_orig_mod.", "")] = state_dict.pop(key)

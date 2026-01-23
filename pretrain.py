@@ -8,7 +8,7 @@ import torch
 from torch.utils.data import DataLoader
 from torch.nn import MSELoss
 from torch.nn.utils import clip_grad_norm_
-from torch.optim import AdamW
+from torch.optim import AdamW, SGD
 from torch.amp import autocast
 from torch.cuda import is_available as cuda_is_available, is_bf16_supported
 from torch.backends.mps import is_available as mps_is_available
@@ -30,7 +30,7 @@ from torchmetrics.image import (
 
 from data import ImageFolder
 from src.ultrazoom.model import UltraZoom
-from loss import VGGLoss
+from loss import VGGLoss, AdaptiveMultitaskLoss
 
 from tqdm import tqdm
 
@@ -61,7 +61,8 @@ def main():
     parser.add_argument("--batch_size", default=32, type=int)
     parser.add_argument("--gradient_accumulation_steps", default=4, type=int)
     parser.add_argument("--num_epochs", default=100, type=int)
-    parser.add_argument("--learning_rate", default=3e-4, type=float)
+    parser.add_argument("--upscaler_learning_rate", default=3e-4, type=float)
+    parser.add_argument("--adaptive_loss_learning_rate", default=1e-3, type=float)
     parser.add_argument("--max_gradient_norm", default=2.0, type=float)
     parser.add_argument("--primary_channels", default=48, type=int)
     parser.add_argument("--primary_layers", default=4, type=int)
@@ -88,7 +89,7 @@ def main():
     if args.batch_size < 1:
         raise ValueError(f"Batch size must be greater than 0, {args.batch_size} given.")
 
-    if args.learning_rate < 0:
+    if args.upscaler_learning_rate < 0:
         raise ValueError(
             f"Learning rate must be a positive value, {args.learning_rate} given."
         )
@@ -171,7 +172,7 @@ def main():
     train_loader = new_dataloader(training, shuffle=True)
     test_loader = new_dataloader(testing)
 
-    model_args = {
+    upscaler_args = {
         "upscale_ratio": args.upscale_ratio,
         "primary_channels": args.primary_channels,
         "primary_layers": args.primary_layers,
@@ -184,23 +185,31 @@ def main():
         "hidden_ratio": args.hidden_ratio,
     }
 
-    model = UltraZoom(**model_args)
+    upscaler = UltraZoom(**upscaler_args)
 
-    model.add_weight_norms()
+    upscaler.add_weight_norms()
 
-    model = torch.compile(model)
+    upscaler = torch.compile(upscaler)
 
-    model = model.to(args.device)
+    upscaler = upscaler.to(args.device)
 
     l2_loss_function = MSELoss()
-    vgg_loss_function = VGGLoss().to(args.device)
+    vgg_loss_function = VGGLoss()
 
     vgg_loss_function = torch.compile(vgg_loss_function)
 
-    print(f"Model has {model.num_trainable_params:,} trainable parameters")
+    vgg_loss_function = vgg_loss_function.to(args.device)
+
+    combined_loss_function = AdaptiveMultitaskLoss(num_losses=3).to(args.device)
+
+    print(f"Upscaler has {upscaler.num_trainable_params:,} trainable parameters")
     print(f"Loss function has {vgg_loss_function.num_params:,} parameters")
 
-    optimizer = AdamW(model.parameters(), lr=args.learning_rate)
+    upscaler_optimizer = AdamW(upscaler.parameters(), lr=args.upscaler_learning_rate)
+
+    combined_loss_optimizer = SGD(
+        combined_loss_function.parameters(), lr=args.adaptive_loss_learning_rate
+    )
 
     psnr_metric = PeakSignalNoiseRatio(data_range=1.0).to(args.device)
     ssim_metric = StructuralSimilarityIndexMeasure().to(args.device)
@@ -213,18 +222,21 @@ def main():
             args.checkpoint_path, map_location=args.device, weights_only=True
         )
 
-        model.load_state_dict(checkpoint["model"])
-        optimizer.load_state_dict(checkpoint["optimizer"])
+        upscaler.load_state_dict(checkpoint["upscaler"])
+        upscaler_optimizer.load_state_dict(checkpoint["upscaler_optimizer"])
+
+        combined_loss_function.load_state_dict(checkpoint["combined_loss"])
+        combined_loss_optimizer.load_state_dict(checkpoint["combined_loss_optimizer"])
 
         starting_epoch += checkpoint["epoch"]
 
         print("Previous checkpoint resumed successfully")
 
     if args.activation_checkpointing:
-        model.encoder.enable_activation_checkpointing()
+        upscaler.encoder.enable_activation_checkpointing()
 
     print("Training ...")
-    model.train()
+    upscaler.train()
 
     for epoch in range(starting_epoch, args.num_epochs + 1):
         total_l2_loss, total_vgg22_loss, total_vgg54_loss = 0.0, 0.0, 0.0
@@ -238,15 +250,13 @@ def main():
             y = y.to(args.device, non_blocking=True)
 
             with amp_context:
-                y_pred = model.forward(x)
+                y_pred = upscaler.forward(x)
 
-                l2_loss = l2_loss_function(y_pred, y)
-                vgg22_loss, vgg54_loss = vgg_loss_function(y_pred, y)
+                l2_loss = l2_loss_function.forward(y_pred, y)
+                vgg22_loss, vgg54_loss = vgg_loss_function.forward(y_pred, y)
 
-                combined_loss = (
-                    l2_loss / l2_loss.detach()
-                    + vgg22_loss / vgg22_loss.detach()
-                    + vgg54_loss / vgg54_loss.detach()
+                combined_loss = combined_loss_function.forward(
+                    torch.stack([l2_loss, vgg22_loss, vgg54_loss])
                 )
 
                 scaled_loss = combined_loss / args.gradient_accumulation_steps
@@ -254,11 +264,13 @@ def main():
             scaled_loss.backward()
 
             if step % args.gradient_accumulation_steps == 0:
-                norm = clip_grad_norm_(model.parameters(), args.max_gradient_norm)
+                norm = clip_grad_norm_(upscaler.parameters(), args.max_gradient_norm)
 
-                optimizer.step()
+                upscaler_optimizer.step()
+                combined_loss_optimizer.step()
 
-                optimizer.zero_grad()
+                upscaler_optimizer.zero_grad()
+                combined_loss_optimizer.zero_grad()
 
                 total_gradient_norm += norm.item()
 
@@ -279,6 +291,7 @@ def main():
         logger.add_scalar("VGG22 L2", average_vgg22_loss, epoch)
         logger.add_scalar("VGG54 L2", average_vgg54_loss, epoch)
         logger.add_scalar("Gradient Norm", average_gradient_norm, epoch)
+        logger.add_tensor("Loss Weights", combined_loss_function.loss_weights, epoch)
 
         print(
             f"Epoch {epoch}:",
@@ -288,14 +301,16 @@ def main():
             f"Gradient Norm: {average_gradient_norm:.4}",
         )
 
+        print(combined_loss_function.loss_weights)
+
         if epoch % args.eval_interval == 0:
-            model.eval()
+            upscaler.eval()
 
             for x, y in tqdm(test_loader, desc="Testing", leave=False):
                 x = x.to(args.device, non_blocking=True)
                 y = y.to(args.device, non_blocking=True)
 
-                y_pred = model.upscale(x)
+                y_pred = upscaler.upscale(x)
 
                 psnr_metric.update(y_pred, y)
                 ssim_metric.update(y_pred, y)
@@ -319,14 +334,16 @@ def main():
             ssim_metric.reset()
             vif_metric.reset()
 
-            model.train()
+            upscaler.train()
 
         if epoch % args.checkpoint_interval == 0:
             checkpoint = {
                 "epoch": epoch,
-                "model_args": model_args,
-                "model": model.state_dict(),
-                "optimizer": optimizer.state_dict(),
+                "upscaler_args": upscaler_args,
+                "upscaler": upscaler.state_dict(),
+                "upscaler_optimizer": upscaler_optimizer.state_dict(),
+                "combined_loss": combined_loss_function.state_dict(),
+                "combined_loss_optimizer": combined_loss_optimizer.state_dict(),
             }
 
             torch.save(checkpoint, args.checkpoint_path)

@@ -2,7 +2,7 @@ import torch
 
 from torch import Tensor
 
-from torch.nn import Module, MSELoss, BCEWithLogitsLoss
+from torch.nn import Module, MSELoss, BCEWithLogitsLoss, Parameter
 
 from torchvision.models import vgg19, VGG19_Weights
 
@@ -41,12 +41,12 @@ class VGGLoss(Module):
         y_pred_vgg22 = self.vgg22.forward(y_pred)
         y_vgg22 = self.vgg22.forward(y)
 
-        vgg22_loss = self.mse(y_pred_vgg22, y_vgg22)
+        vgg22_loss = self.mse.forward(y_pred_vgg22, y_vgg22)
 
         y_pred_vgg54 = self.vgg54.forward(y_pred_vgg22)
         y_vgg54 = self.vgg54.forward(y_vgg22)
 
-        vgg54_loss = self.mse(y_pred_vgg54, y_vgg54)
+        vgg54_loss = self.mse.forward(y_pred_vgg54, y_vgg54)
 
         return vgg22_loss, vgg54_loss
 
@@ -77,3 +77,54 @@ class RelativisticBCELoss(Module):
         loss = self.bce.forward(y_pred, y)
 
         return loss
+
+
+class AdaptiveMultitaskLoss(Module):
+    """
+    Dynamic loss weighting using homoscedastic uncertainty as a training signal.
+    """
+
+    def __init__(self, num_losses: int):
+        super().__init__()
+
+        assert num_losses > 0, "Number of losses must be positive"
+
+        self.log_sigmas = Parameter(torch.zeros(num_losses))
+
+        self.num_losses = num_losses
+
+    @property
+    def loss_weights(self) -> Tensor:
+        """
+        Get current loss weights based on learned uncertainties.
+
+        Returns:
+            Tensor of loss weights for each task.
+        """
+
+        weights = 0.5 * torch.exp(-self.log_sigmas)
+
+        return weights
+
+    def forward(self, losses: Tensor) -> Tensor:
+        """
+        Compute uncertainty-weighted combined loss.
+
+        Args:
+            losses: Tensor of individual loss values for each task.
+
+        Returns:
+            Combined uncertainty-weighted loss.
+        """
+
+        assert (
+            losses.size(0) == self.num_losses
+        ), "Number of losses must match number of tasks."
+
+        weighted_losses = self.loss_weights * losses
+
+        combined_loss = 0.5 * weighted_losses + 0.5 * self.log_sigmas
+
+        combined_loss = combined_loss.sum()
+
+        return combined_loss

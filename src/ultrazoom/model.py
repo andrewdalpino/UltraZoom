@@ -59,6 +59,7 @@ class UltraZoom(Module, PyTorchModelHubMixin):
         quaternary_channels: int,
         quaternary_layers: int,
         hidden_ratio: int,
+        degradation_features: int,
     ):
         super().__init__()
 
@@ -78,7 +79,11 @@ class UltraZoom(Module, PyTorchModelHubMixin):
             hidden_ratio,
         )
 
-        self.head = DecoderHead(primary_channels, upscale_ratio)
+        self.super_resolution_head = SuperResolutionHead(
+            primary_channels, upscale_ratio
+        )
+
+        self.degradation_head = DegradationHead(primary_channels, degradation_features)
 
         self.skip = AdaptiveResidualMix(3)
 
@@ -105,16 +110,20 @@ class UltraZoom(Module, PyTorchModelHubMixin):
 
         self.stem.add_weight_norms()
         self.unet.add_weight_norms()
-        self.head.add_weight_norms()
         self.skip.add_weight_norms()
+
+        self.super_resolution_head.add_weight_norms()
+        self.degradation_head.add_weight_norms()
 
     def add_lora_adapters(self, rank: int, alpha: float) -> None:
         """Add LoRA adapters to all layers in the network."""
 
         self.stem.add_lora_adapters(rank, alpha)
         self.unet.add_lora_adapters(rank, alpha)
-        self.head.add_lora_adapters(rank, alpha)
         self.skip.add_lora_adapters(rank, alpha)
+
+        self.super_resolution_head.add_lora_adapters(rank, alpha)
+        self.degradation_head.add_lora_adapters(rank, alpha)
 
     def remove_parameterizations(self) -> None:
         """Remove all network parameterizations."""
@@ -145,11 +154,13 @@ class UltraZoom(Module, PyTorchModelHubMixin):
 
         z = self.stem.forward(x)
         z = self.unet.forward(z)
-        z = self.head.forward(z)
 
-        z = self.skip.forward(s, z)
+        z_super_resolution = self.super_resolution_head.forward(z)
+        z_degradation = self.degradation_head.forward(z)
 
-        return z
+        z = self.skip.forward(s, z_super_resolution)
+
+        return z, z_degradation
 
     @torch.inference_mode()
     def upscale(self, x: Tensor) -> Tensor:
@@ -160,7 +171,7 @@ class UltraZoom(Module, PyTorchModelHubMixin):
             x: Input image tensor of shape (B, 3, H, W).
         """
 
-        z = self.forward(x)
+        z, _ = self.forward(x)
 
         z = torch.clamp(z, 0, 1)
 
@@ -680,8 +691,8 @@ class DecoderBlock(EncoderBlock):
     pass
 
 
-class DecoderHead(Module):
-    """A decoder header for gradually upscaling the LR feature maps."""
+class SuperResolutionHead(Module):
+    """A decoder head for upscaling the LR feature maps."""
 
     def __init__(self, in_channels: int, upscale_ratio: int):
         super().__init__()
@@ -713,6 +724,30 @@ class DecoderHead(Module):
 
     def forward(self, x: Tensor) -> Tensor:
         z = self.upsample.forward(x)
+
+        return z
+
+
+class DegradationHead(Module):
+    """A decoder head for estimating the amount of degradation in the input image."""
+
+    def __init__(self, num_channels: int, num_features: int):
+        super().__init__()
+
+        self.pool = AdaptiveAvgPool2d(1)
+
+        self.conv = Conv2d(num_channels, num_features, kernel_size=1)
+
+        self.flatten = Flatten(start_dim=1)
+
+    def add_weight_norms(self) -> None:
+        self.conv = weight_norm(self.conv)
+
+    def forward(self, x: Tensor) -> Tensor:
+        z = self.pool.forward(x)
+        z = self.conv.forward(z)
+
+        z = self.flatten.forward(z)
 
         return z
 

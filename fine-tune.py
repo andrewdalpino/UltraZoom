@@ -128,7 +128,7 @@ def main():
         weights_only=True,
     )
 
-    upscaler_args = checkpoint["model_args"]
+    upscaler_args = checkpoint["upscaler_args"]
 
     new_dataset = partial(
         ImageFolder,
@@ -202,8 +202,9 @@ def main():
     pixel_l2_loss = MSELoss()
     stage_1_l2_loss = MSELoss()
     bce_loss = RelativisticBCELoss()
+    degradation_loss_function = MSELoss()
 
-    combined_loss_function = AdaptiveMultitaskLoss(num_losses=3).to(args.device)
+    combined_loss_function = AdaptiveMultitaskLoss(4).to(args.device)
 
     upscaler_optimizer = AdamW(upscaler.parameters(), lr=args.upscaler_learning_rate)
     critic_optimizer = AdamW(critic.parameters(), lr=args.critic_learning_rate)
@@ -252,28 +253,29 @@ def main():
 
     for epoch in range(starting_epoch, args.num_epochs + 1):
         total_pixel_l2, total_u_stage_1_l2 = 0.0, 0.0
-        total_u_bce, total_c_bce = 0.0, 0.0
+        total_u_bce, total_c_bce, total_u_degradation_loss = 0.0, 0.0, 0.0
         total_u_gradient_norm, total_c_gradient_norm = 0.0, 0.0
         total_batches, total_steps = 0, 0
 
         is_warmup = epoch <= args.critic_warmup_epochs
 
-        for step, (x, y) in enumerate(
+        for step, (x, y_orig, y_deg) in enumerate(
             tqdm(train_loader, desc=f"Epoch {epoch}", leave=False), start=1
         ):
             x = x.to(args.device, non_blocking=True)
-            y = y.to(args.device, non_blocking=True)
+            y_orig = y_orig.to(args.device, non_blocking=True)
+            y_deg = y_deg.to(args.device, non_blocking=True)
 
-            y_real = torch.full((y.size(0), 1), 1.0).to(args.device)
-            y_fake = torch.full((y.size(0), 1), 0.0).to(args.device)
+            y_real = torch.full((y_orig.size(0), 1), 1.0).to(args.device)
+            y_fake = torch.full((y_orig.size(0), 1), 0.0).to(args.device)
 
             update_this_step = step % args.gradient_accumulation_steps == 0
 
             with amp_context:
-                u_pred = upscaler.forward(x)
+                u_pred_sr, u_pred_deg = upscaler.forward(x)
 
-                _, _, _, _, c_pred_fake = critic.forward(u_pred.detach())
-                _, _, _, _, c_pred_real = critic.forward(y)
+                _, _, _, _, c_pred_fake = critic.forward(u_pred_sr.detach())
+                _, _, _, _, c_pred_real = critic.forward(y_orig)
 
                 c_bce = bce_loss.forward(c_pred_real, c_pred_fake, y_real, y_fake)
 
@@ -298,17 +300,19 @@ def main():
 
             if not is_warmup:
                 with amp_context:
-                    pixel_l2 = pixel_l2_loss.forward(u_pred, y)
+                    pixel_l2 = pixel_l2_loss.forward(u_pred_sr, y_orig)
 
-                    z1_fake, _, _, _, c_pred_fake = critic.forward(u_pred)
-                    z1_real, _, _, _, c_pred_real = critic.forward(y)
+                    z1_fake, _, _, _, c_pred_fake = critic.forward(u_pred_sr)
+                    z1_real, _, _, _, c_pred_real = critic.forward(y_orig)
 
                     u_stage_1_l2 = stage_1_l2_loss.forward(z1_fake, z1_real)
 
                     u_bce = bce_loss.forward(c_pred_real, c_pred_fake, y_fake, y_real)
 
+                    u_deg_loss = degradation_loss_function.forward(u_pred_deg, y_deg)
+
                     combined_u_loss = combined_loss_function.forward(
-                        torch.stack([pixel_l2, u_stage_1_l2, u_bce])
+                        torch.stack([pixel_l2, u_stage_1_l2, u_bce, u_deg_loss])
                     )
 
                     scaled_u_loss = combined_u_loss / args.gradient_accumulation_steps
@@ -331,12 +335,14 @@ def main():
                 total_pixel_l2 += pixel_l2.item()
                 total_u_stage_1_l2 += u_stage_1_l2.item()
                 total_u_bce += u_bce.item()
+                total_u_degradation_loss += u_deg_loss.item()
 
             total_batches += 1
 
         average_pixel_l2 = total_pixel_l2 / total_batches
         average_u_stage_1_l2 = total_u_stage_1_l2 / total_batches
         average_u_bce = total_u_bce / total_batches
+        average_u_degradation_loss = total_u_degradation_loss / total_batches
         average_c_bce = total_c_bce / total_batches
 
         average_u_gradient_norm = total_u_gradient_norm / total_steps
@@ -345,36 +351,49 @@ def main():
         logger.add_scalar("Pixel L2", average_pixel_l2, epoch)
         logger.add_scalar("Stage 1 L2", average_u_stage_1_l2, epoch)
         logger.add_scalar("Upscaler BCE", average_u_bce, epoch)
+        logger.add_scalar("Upscaler Degradation L2", average_u_degradation_loss, epoch)
         logger.add_scalar("Upscaler Norm", average_u_gradient_norm, epoch)
         logger.add_scalar("Critic BCE", average_c_bce, epoch)
         logger.add_scalar("Critic Norm", average_c_gradient_norm, epoch)
-        logger.add_tensor("Loss Weights", combined_loss_function.loss_weights, epoch)
+        logger.add_scalar("Pixel Weight", combined_loss_function.loss_weights[0], epoch)
+        logger.add_scalar(
+            "Stage 1 L2 Weight", combined_loss_function.loss_weights[1], epoch
+        )
+        logger.add_scalar("BCE Weight", combined_loss_function.loss_weights[2], epoch)
+        logger.add_scalar(
+            "Degradation Weight", combined_loss_function.loss_weights[3], epoch
+        )
 
         print(
             f"Epoch {epoch}:",
             f"Pixel L2: {average_pixel_l2:.5},",
             f"Stage 1 L2: {average_u_stage_1_l2:.5},",
             f"Upscaler BCE: {average_u_bce:.5},",
+            f"Degradation L2: {average_u_degradation_loss:.5},",
             f"Upscaler Norm: {average_u_gradient_norm:.4},",
             f"Critic BCE: {average_c_bce:.5},",
             f"Critic Norm: {average_c_gradient_norm:.4}",
+            f"Pixel Weight: {combined_loss_function.loss_weights[0]:.4},",
+            f"Stage 1 L2 Weight: {combined_loss_function.loss_weights[1]:.4},",
+            f"BCE Weight: {combined_loss_function.loss_weights[2]:.4},",
+            f"Degradation Weight: {combined_loss_function.loss_weights[3]:.4}",
         )
 
         if epoch % args.eval_interval == 0:
             upscaler.eval()
             critic.eval()
 
-            for x, y in tqdm(test_loader, desc="Testing", leave=False):
+            for x, y, _ in tqdm(test_loader, desc="Testing", leave=False):
                 x = x.to(args.device, non_blocking=True)
                 y = y.to(args.device, non_blocking=True)
 
                 y_real = torch.full((y.size(0), 1), 1.0).to(args.device)
                 y_fake = torch.full((y.size(0), 1), 0.0).to(args.device)
 
-                u_pred = upscaler.upscale(x)
+                u_pred_sr = upscaler.upscale(x)
 
                 c_pred_real = critic.predict(y)
-                c_pred_fake = critic.predict(u_pred)
+                c_pred_fake = critic.predict(u_pred_sr)
 
                 c_pred_real -= c_pred_fake.mean()
                 c_pred_fake -= c_pred_real.mean()
@@ -382,9 +401,9 @@ def main():
                 c_pred = torch.cat((c_pred_real, c_pred_fake), dim=0)
                 labels = torch.cat((y_real, y_fake), dim=0)
 
-                psnr_metric.update(u_pred, y)
-                ssim_metric.update(u_pred, y)
-                vif_metric.update(u_pred, y)
+                psnr_metric.update(u_pred_sr, y)
+                ssim_metric.update(u_pred_sr, y)
+                vif_metric.update(u_pred_sr, y)
 
                 precision_metric.update(c_pred, labels)
                 recall_metric.update(c_pred, labels)

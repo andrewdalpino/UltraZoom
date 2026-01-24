@@ -139,15 +139,17 @@ class ImageFolder(Dataset):
         if self.pre_transform:
             image = self.pre_transform.forward(image)
 
-        x, _ = self.blur_transform.forward(image)
-        x, _ = self.gaussian_noise_transform.forward(x)
+        x, blur_sigma = self.blur_transform.forward(image)
+        x, noise_sigma = self.gaussian_noise_transform.forward(x)
         x = self.resize_transform.forward(x)
-        x, _ = self.compression_transform.forward(x)
+        x, jpeg_com = self.compression_transform.forward(x)
         x = self.to_tensor_transform.forward(x)
 
-        y = self.to_tensor_transform.forward(image)
+        y_original = self.to_tensor_transform.forward(image)
 
-        return x, y
+        y_degredation = torch.tensor([blur_sigma, noise_sigma, jpeg_com])
+
+        return x, y_original, y_degredation
 
     def __len__(self):
         return len(self.image_paths)

@@ -287,7 +287,7 @@ Then navigate to the dashboard using your favorite web browser.
 | --test_images_path | "./dataset/test" | str | The path to the folder containing your testing images. |
 | --num_dataset_processes | 8 | int | The number of CPU processes to use to preprocess the dataset. |
 | --target_resolution | 256 | int | The number of pixels in the height and width dimensions of the training images. |
-| --upscale_ratio | 2 | (1, 2, 3, 4) | The upscaling or zoom factor. |
+| --upscale_ratio | 2 | (2, 4, 8) | The upscaling or zoom factor. |
 | --min_gaussian_blur | 0.0 | float | The minimum amount of Gaussian blur to apply to the degraded low-resolution image. |
 | --max_gaussian_blur | 1.0 | float | The maximum amount of Gaussian blur to apply to the degraded low-resolution image. |
 | --min_gaussian_noise | 0.0 | float | The minimum amount of Gaussian noise to add to the degraded low-resolution image. |
@@ -301,11 +301,18 @@ Then navigate to the dashboard using your favorite web browser.
 | --batch_size | 32 | int | The number of training images to pass through the network at a time. |
 | --gradient_accumulation_steps | 4 | int | The number of batches to pass through the network before updating the model weights. |
 | --num_epochs | 100 | int | The number of epochs to train for. |
-| --learning_rate | 5e-4 | float | The learning rate of the AdamW optimizer. |
+| --upscaler_learning_rate | 3e-4 | float | The learning rate of the AdamW optimizer. |
+| --adaptive_loss_learning_rate | 1e-3 | float | The learning rate of the loss combiner weights. |
 | --max_gradient_norm | 2.0 | float | Clip gradients above this threshold norm before stepping. |
-| --num_channels | 48 | int | The number of channels within each encoder block. |
+| --num_primary_channels | 48 | int | The number of primary channels within each encoder/decoder block. |
+| --num_primary_layers | 4 | int | The number of primary layers in the encoder/decoder. |
+| --num_secondary_channels | 96 | int | The number of secondary channels within each encoder/decoder block. |
+| --num_secondary_layers | 4 | int | The number of secondary layers in the encoder/decoder. |
+| --num_tertiary_channels | 192 | int | The number of tertiary channels within each encoder/decoder block. |
+| --num_tertiary_layers | 4 | int | The number of tertiary layers in the encoder/decoder. |
+| --num_quaternary_channels | 384 | int | The number of quaternary channels within each encoder/decoder block. |
+| --num_quaternary_layers | 8 | int | The number of quaternary layers in the encoder/decoder. |
 | --hidden_ratio | 2 | (1, 2, 4) | The ratio of hidden channels to `num_channels` within the activation portion of each encoder block. |
-| --num_encoder_layers | 20 | int | The number of layers within the body of the encoder. |
 | --activation_checkpointing | False | bool | Should we use activation checkpointing? This will drastically reduce memory utilization during training at the cost of recomputing the forward pass. |
 | --eval_interval | 2 | int | Evaluate the model after this many epochs on the testing set. |
 | --checkpoint_interval | 2 | int | Save the model checkpoint to disk every this many epochs. |
@@ -357,6 +364,7 @@ python fine-tune.py --base_checkpoint_path="./checkpoints/2X-100.pt" --critic_mo
 | --num_epochs | 100 | int | The number of epochs to train for. |
 | --critic_warmup_epochs | 1 | int | Train the critic model for this many epochs before using it to train the upscaler. |
 | --critic_model_size | "small" | str | The size of the critic model. Choice of small, medium, and large. |
+| --adaptive_loss_learning_rate | 1e-3 | float | The learning rate of the adaptive loss combiner. |
 | --activation_checkpointing | False | bool | Should we use activation checkpointing? This will drastically reduce memory utilization during training at the cost of recomputing the forward pass. |
 | --eval_interval | 2 | int | Evaluate the model after this many epochs on the testing set. |
 | --checkpoint_interval | 2 | int | Save the model checkpoint to disk every this many epochs. |
@@ -399,7 +407,7 @@ python test-compare.py --guassian_blur=0.5 --gaussian_noise=0.7 --jpeg_compressi
 
 ## References
 
->- J. Song, et. al Gram-GAN: Image Super-Resolution Based on Gram Matrix and Discriminator Perceptual Loss, Sensors, 2023.
+>- J. Song, et al. Gram-GAN: Image Super-Resolution Based on Gram Matrix and Discriminator Perceptual Loss, Sensors, 2023.
 >- Z. Liu, et al. A ConvNet for the 2020s, 2022.
 >- A. Jolicoeur-Martineau. The Relativistic Discriminator: A Key Element Missing From Standard GAN, 2018.
 >- J. Yu, et al. Wide Activation for Efficient and Accurate Image Super-Resolution, 2018.
@@ -408,3 +416,4 @@ python test-compare.py --guassian_blur=0.5 --gaussian_noise=0.7 --jpeg_compressi
 >- T. Salimans, et al. Weight Normalization: A Simple Reparameterization to Accelerate Training of Deep Neural Networks, OpenAI, 2016.
 >- T. Miyato, et al. Spectral Normalization for Generative Adversarial Networks, ICLR, 2018.
 >- E. Perez, et. al. FiLM: Visual Reasoning with a General Conditioning Layer, Association for the Advancement of Artificial Intelligence, 2018.
+>- A. Kendall, et. al. Multi-task Learning Using Uncertainty to Weigh Losses for Scene Geomtery and Semantics, 2018.

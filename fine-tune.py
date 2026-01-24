@@ -202,7 +202,7 @@ def main():
     pixel_l2_loss = MSELoss()
     stage_1_l2_loss = MSELoss()
     bce_loss = RelativisticBCELoss()
-    degradation_loss_function = MSELoss()
+    qa_loss_function = MSELoss()
 
     combined_loss_function = AdaptiveMultitaskLoss(4).to(args.device)
 
@@ -252,8 +252,8 @@ def main():
     critic.train()
 
     for epoch in range(starting_epoch, args.num_epochs + 1):
-        total_pixel_l2, total_u_stage_1_l2 = 0.0, 0.0
-        total_u_bce, total_c_bce, total_u_degradation_loss = 0.0, 0.0, 0.0
+        total_pixel_l2, total_stage_1_l2 = 0.0, 0.0
+        total_u_bce, total_c_bce, total_qa_loss = 0.0, 0.0, 0.0
         total_u_gradient_norm, total_c_gradient_norm = 0.0, 0.0
         total_batches, total_steps = 0, 0
 
@@ -272,7 +272,7 @@ def main():
             update_this_step = step % args.gradient_accumulation_steps == 0
 
             with amp_context:
-                u_pred_sr, u_pred_deg = upscaler.forward(x)
+                u_pred_sr, u_pred_qa = upscaler.forward(x)
 
                 _, _, _, _, c_pred_fake = critic.forward(u_pred_sr.detach())
                 _, _, _, _, c_pred_real = critic.forward(y_orig)
@@ -305,14 +305,14 @@ def main():
                     z1_fake, _, _, _, c_pred_fake = critic.forward(u_pred_sr)
                     z1_real, _, _, _, c_pred_real = critic.forward(y_orig)
 
-                    u_stage_1_l2 = stage_1_l2_loss.forward(z1_fake, z1_real)
+                    stage_1_l2 = stage_1_l2_loss.forward(z1_fake, z1_real)
 
                     u_bce = bce_loss.forward(c_pred_real, c_pred_fake, y_fake, y_real)
 
-                    u_deg_loss = degradation_loss_function.forward(u_pred_deg, y_deg)
+                    qa_loss = qa_loss_function.forward(u_pred_qa, y_deg)
 
                     combined_u_loss = combined_loss_function.forward(
-                        torch.stack([pixel_l2, u_stage_1_l2, u_bce, u_deg_loss])
+                        torch.stack([pixel_l2, stage_1_l2, u_bce, qa_loss])
                     )
 
                     scaled_u_loss = combined_u_loss / args.gradient_accumulation_steps
@@ -333,43 +333,41 @@ def main():
                     total_u_gradient_norm += u_norm.item()
 
                 total_pixel_l2 += pixel_l2.item()
-                total_u_stage_1_l2 += u_stage_1_l2.item()
+                total_stage_1_l2 += stage_1_l2.item()
                 total_u_bce += u_bce.item()
-                total_u_degradation_loss += u_deg_loss.item()
+                total_qa_loss += qa_loss.item()
 
             total_batches += 1
 
         average_pixel_l2 = total_pixel_l2 / total_batches
-        average_u_stage_1_l2 = total_u_stage_1_l2 / total_batches
+        average_stage_1_l2 = total_stage_1_l2 / total_batches
         average_u_bce = total_u_bce / total_batches
-        average_u_degradation_loss = total_u_degradation_loss / total_batches
+        average_qa_loss = total_qa_loss / total_batches
         average_c_bce = total_c_bce / total_batches
 
         average_u_gradient_norm = total_u_gradient_norm / total_steps
         average_c_gradient_norm = total_c_gradient_norm / total_steps
 
         logger.add_scalar("Pixel L2", average_pixel_l2, epoch)
-        logger.add_scalar("Stage 1 L2", average_u_stage_1_l2, epoch)
+        logger.add_scalar("Stage 1 L2", average_stage_1_l2, epoch)
         logger.add_scalar("Upscaler BCE", average_u_bce, epoch)
-        logger.add_scalar("Upscaler Degradation L2", average_u_degradation_loss, epoch)
+        logger.add_scalar("QA L2", average_qa_loss, epoch)
         logger.add_scalar("Upscaler Norm", average_u_gradient_norm, epoch)
         logger.add_scalar("Critic BCE", average_c_bce, epoch)
         logger.add_scalar("Critic Norm", average_c_gradient_norm, epoch)
         logger.add_scalar("Pixel Weight", combined_loss_function.loss_weights[0], epoch)
         logger.add_scalar(
-            "Stage 1 L2 Weight", combined_loss_function.loss_weights[1], epoch
+            "Stage 1 Weight", combined_loss_function.loss_weights[1], epoch
         )
         logger.add_scalar("BCE Weight", combined_loss_function.loss_weights[2], epoch)
-        logger.add_scalar(
-            "Degradation Weight", combined_loss_function.loss_weights[3], epoch
-        )
+        logger.add_scalar("QA Weight", combined_loss_function.loss_weights[3], epoch)
 
         print(
             f"Epoch {epoch}:",
             f"Pixel L2: {average_pixel_l2:.5},",
-            f"Stage 1 L2: {average_u_stage_1_l2:.5},",
+            f"Stage 1 L2: {average_stage_1_l2:.5},",
             f"Upscaler BCE: {average_u_bce:.5},",
-            f"Degradation L2: {average_u_degradation_loss:.5},",
+            f"QA L2: {average_qa_loss:.5},",
             f"Upscaler Norm: {average_u_gradient_norm:.4},",
             f"Critic BCE: {average_c_bce:.5},",
             f"Critic Norm: {average_c_gradient_norm:.4}",

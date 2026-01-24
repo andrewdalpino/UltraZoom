@@ -79,11 +79,8 @@ class UltraZoom(Module, PyTorchModelHubMixin):
             hidden_ratio,
         )
 
-        self.super_resolution_head = SuperResolutionHead(
-            primary_channels, upscale_ratio
-        )
-
-        self.degradation_head = DegradationHead(primary_channels, degradation_features)
+        self.qa_head = QualityAssessor(primary_channels, degradation_features)
+        self.sr_head = SuperResolver(primary_channels, upscale_ratio)
 
         self.skip = AdaptiveResidualMix(3)
 
@@ -112,8 +109,8 @@ class UltraZoom(Module, PyTorchModelHubMixin):
         self.unet.add_weight_norms()
         self.skip.add_weight_norms()
 
-        self.super_resolution_head.add_weight_norms()
-        self.degradation_head.add_weight_norms()
+        self.sr_head.add_weight_norms()
+        self.qa_head.add_weight_norms()
 
     def add_lora_adapters(self, rank: int, alpha: float) -> None:
         """Add LoRA adapters to all layers in the network."""
@@ -122,8 +119,8 @@ class UltraZoom(Module, PyTorchModelHubMixin):
         self.unet.add_lora_adapters(rank, alpha)
         self.skip.add_lora_adapters(rank, alpha)
 
-        self.super_resolution_head.add_lora_adapters(rank, alpha)
-        self.degradation_head.add_lora_adapters(rank, alpha)
+        self.sr_head.add_lora_adapters(rank, alpha)
+        self.qa_head.add_lora_adapters(rank, alpha)
 
     def remove_parameterizations(self) -> None:
         """Remove all network parameterizations."""
@@ -155,12 +152,12 @@ class UltraZoom(Module, PyTorchModelHubMixin):
         z = self.stem.forward(x)
         z = self.unet.forward(z)
 
-        z_super_resolution = self.super_resolution_head.forward(z)
-        z_degradation = self.degradation_head.forward(z)
+        z_sr = self.sr_head.forward(z)
+        z_qa = self.qa_head.forward(z)
 
-        z = self.skip.forward(s, z_super_resolution)
+        z_sr = self.skip.forward(s, z_sr)
 
-        return z, z_degradation
+        return z_sr, z_qa
 
     @torch.inference_mode()
     def upscale(self, x: Tensor) -> Tensor:
@@ -691,67 +688,6 @@ class DecoderBlock(EncoderBlock):
     pass
 
 
-class SuperResolutionHead(Module):
-    """A decoder head for upscaling the LR feature maps."""
-
-    def __init__(self, in_channels: int, upscale_ratio: int):
-        super().__init__()
-
-        assert upscale_ratio in {
-            2,
-            4,
-            8,
-        }, "Upscale ratio must be either 2, 4, or 8."
-
-        num_layers = int(log2(upscale_ratio))
-
-        self.upsample = Sequential(
-            *[
-                SubpixelConv2d(in_channels, in_channels, 2)
-                for _ in range(num_layers - 1)
-            ]
-        )
-
-        self.upsample.append(SubpixelConv2d(in_channels, 3, 2))
-
-    def add_weight_norms(self) -> None:
-        for module in self.upsample:
-            module.add_weight_norms()
-
-    def add_lora_adapters(self, rank: int, alpha: float) -> None:
-        for module in self.upsample:
-            module.add_lora_adapters(rank, alpha)
-
-    def forward(self, x: Tensor) -> Tensor:
-        z = self.upsample.forward(x)
-
-        return z
-
-
-class DegradationHead(Module):
-    """A decoder head for estimating the amount of degradation in the input image."""
-
-    def __init__(self, num_channels: int, num_features: int):
-        super().__init__()
-
-        self.pool = AdaptiveAvgPool2d(1)
-
-        self.conv = Conv2d(num_channels, num_features, kernel_size=1)
-
-        self.flatten = Flatten(start_dim=1)
-
-    def add_weight_norms(self) -> None:
-        self.conv = weight_norm(self.conv)
-
-    def forward(self, x: Tensor) -> Tensor:
-        z = self.pool.forward(x)
-        z = self.conv.forward(z)
-
-        z = self.flatten.forward(z)
-
-        return z
-
-
 class PixelCrush(Module):
     """Downsample the feature maps using strided convolution."""
 
@@ -902,7 +838,7 @@ class Bouncer(Module):
     ):
         super().__init__()
 
-        self.detector = Detector(
+        self.detector = FeatureDetector(
             input_channels,
             primary_channels,
             primary_layers,
@@ -914,7 +850,7 @@ class Bouncer(Module):
             quaternary_layers,
         )
 
-        self.head = BinaryClassifier(quaternary_channels)
+        self.head = FakeDiscriminator(quaternary_channels)
 
     @property
     def num_trainable_params(self) -> int:
@@ -952,7 +888,7 @@ class Bouncer(Module):
         return z5
 
 
-class Detector(Module):
+class FeatureDetector(Module):
     """A deep feature extraction network using convolutions."""
 
     def __init__(
@@ -1049,7 +985,7 @@ class Detector(Module):
 
 
 class DetectorBlock(Module):
-    """A detector block with depth-wise separable convolution and residual connection."""
+    """A feature detector block with depth-wise separable convolution and adaptive residual connection."""
 
     def __init__(self, num_channels: int, hidden_ratio: int):
         super().__init__()
@@ -1086,7 +1022,7 @@ class DetectorBlock(Module):
 
 class AdaptiveResidualMix(Module):
     """
-    A hyper-connection that adaptively mixes the input with the residual feature maps.
+    A residual connection that adaptively mixes the input with the residual feature maps.
     """
 
     def __init__(self, num_channels: int):
@@ -1178,7 +1114,106 @@ class DepthwiseSeparableConv2d(Module):
         return z
 
 
-class BinaryClassifier(Module):
+class SuperResolver(Module):
+    """A decoder head for upscaling the input feature maps beyond their original size."""
+
+    def __init__(self, in_channels: int, upscale_ratio: int):
+        super().__init__()
+
+        assert upscale_ratio in {
+            2,
+            4,
+            8,
+        }, "Upscale ratio must be either 2, 4, or 8."
+
+        num_layers = int(log2(upscale_ratio))
+
+        self.upsample = Sequential(
+            *[SR2XBlock(in_channels, in_channels) for _ in range(num_layers - 1)]
+        )
+
+        self.upsample.append(SR2XBlock(in_channels, 3))
+
+    def add_weight_norms(self) -> None:
+        for module in self.upsample:
+            module.add_weight_norms()
+
+    def add_lora_adapters(self, rank: int, alpha: float) -> None:
+        for module in self.upsample:
+            module.add_lora_adapters(rank, alpha)
+
+    def forward(self, x: Tensor) -> Tensor:
+        z = self.upsample.forward(x)
+
+        return z
+
+
+class SR2XBlock(Module):
+    """A 2X super-resolution block."""
+
+    def __init__(self, in_channels: int, out_channels: int):
+        super().__init__()
+
+        self.conv = Conv2d(in_channels, in_channels, kernel_size=3, padding=1)
+
+        self.silu = SiLU()
+
+        self.upscale = SubpixelConv2d(in_channels, out_channels, 2)
+
+    def add_weight_norms(self) -> None:
+        self.conv = weight_norm(self.conv)
+
+        self.upscale.add_weight_norms()
+
+    def add_lora_adapters(self, rank: int, alpha: float) -> None:
+        register_parametrization(
+            self.conv,
+            "weight",
+            ChannelLoRA(self.conv, rank, alpha),
+        )
+
+        self.upscale.add_lora_adapters(rank, alpha)
+
+    def forward(self, x: Tensor) -> Tensor:
+        z = self.conv.forward(x)
+        z = self.silu.forward(z)
+        z = self.upscale.forward(z)
+
+        return z
+
+
+class QualityAssessor(Module):
+    """A decoder head for estimating the amount of degradation present in the input image."""
+
+    def __init__(self, num_channels: int, num_features: int):
+        super().__init__()
+
+        self.conv = Conv2d(num_channels, num_features, kernel_size=3, padding=1)
+
+        self.pool = AdaptiveAvgPool2d(1)
+
+        self.flatten = Flatten(start_dim=1)
+
+    def add_weight_norms(self) -> None:
+        self.conv = weight_norm(self.conv)
+
+    def add_lora_adapters(self, rank: int, alpha: float) -> None:
+        register_parametrization(
+            self.conv,
+            "weight",
+            ChannelLoRA(self.conv, rank, alpha),
+        )
+
+    def forward(self, x: Tensor) -> Tensor:
+        z = self.conv.forward(x)
+        z = self.pool.forward(z)
+
+        z = self.flatten.forward(z)
+
+        return z
+
+
+class FakeDiscriminator(Module):
     """A simple binary classification head that preserves positional invariance."""
 
     def __init__(self, num_channels: int):

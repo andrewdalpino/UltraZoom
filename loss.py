@@ -81,7 +81,7 @@ class RelativisticBCELoss(Module):
 
 class AdaptiveMultitaskLoss(Module):
     """
-    Dynamic loss weighting using homoscedastic uncertainty as a training signal.
+    Dynamic loss weighting using homoscedastic i.e. task-dependent uncertainty as a training signal.
     """
 
     def __init__(self, num_losses: int):
@@ -102,29 +102,30 @@ class AdaptiveMultitaskLoss(Module):
             Tensor of loss weights for each task.
         """
 
-        weights = 0.5 * torch.exp(-self.log_sigmas)
+        weights = torch.exp(-2.0 * self.log_sigmas)
 
         return weights
 
     def forward(self, losses: Tensor) -> Tensor:
         """
-        Compute uncertainty-weighted combined loss.
+        Compute task uncertainty-weighted combined loss.
 
         Args:
             losses: Tensor of individual loss values for each task.
 
         Returns:
-            Combined uncertainty-weighted loss.
+            Combined task uncertainty-weighted loss.
         """
 
         assert (
             losses.size(0) == self.num_losses
         ), "Number of losses must match number of tasks."
 
-        weighted_losses = self.loss_weights * losses
+        weighted_losses = 0.5 * self.loss_weights * losses
 
-        combined_loss = 0.5 * weighted_losses + 0.5 * self.log_sigmas
+        # Regularization term to prevent task weight collapse.
+        weighted_losses += self.log_sigmas
 
-        combined_loss = combined_loss.sum()
+        combined_loss = weighted_losses.sum()
 
         return combined_loss

@@ -79,9 +79,27 @@ class RelativisticBCELoss(Module):
         return loss
 
 
+class BalancedMultitaskLoss(Module):
+    """A dynamic multitask loss weighting where each task contributes equally."""
+
+    EPSILON = 1e-8
+
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, losses: Tensor) -> Tensor:
+        denominator = losses.detach() + self.EPSILON
+
+        combined_loss = losses / denominator
+
+        combined_loss = combined_loss.mean()
+
+        return combined_loss
+
+
 class AdaptiveMultitaskLoss(Module):
     """
-    Dynamic loss weighting using homoscedastic i.e. task-dependent uncertainty as a training signal.
+    Adaptive loss weighting using homoscedastic i.e. task-dependent uncertainty as a training signal.
     """
 
     def __init__(self, num_losses: int):

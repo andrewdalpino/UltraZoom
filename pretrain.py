@@ -8,7 +8,7 @@ import torch
 from torch.utils.data import DataLoader
 from torch.nn import MSELoss
 from torch.nn.utils import clip_grad_norm_
-from torch.optim import AdamW, SGD
+from torch.optim import AdamW
 from torch.amp import autocast
 from torch.cuda import is_available as cuda_is_available, is_bf16_supported
 from torch.backends.mps import is_available as mps_is_available
@@ -30,7 +30,7 @@ from torchmetrics.image import (
 
 from data import ImageFolder
 from src.ultrazoom.model import UltraZoom
-from loss import VGGLoss, AdaptiveMultitaskLoss
+from loss import VGGLoss, BalancedMultitaskLoss
 
 from tqdm import tqdm
 
@@ -62,8 +62,7 @@ def main():
     parser.add_argument("--gradient_accumulation_steps", default=4, type=int)
     parser.add_argument("--num_epochs", default=100, type=int)
     parser.add_argument("--upscaler_learning_rate", default=3e-4, type=float)
-    parser.add_argument("--adaptive_loss_learning_rate", default=1e-3, type=float)
-    parser.add_argument("--max_gradient_norm", default=2.0, type=float)
+    parser.add_argument("--max_gradient_norm", default=1.0, type=float)
     parser.add_argument("--primary_channels", default=48, type=int)
     parser.add_argument("--primary_layers", default=4, type=int)
     parser.add_argument("--secondary_channels", default=96, type=int)
@@ -183,7 +182,6 @@ def main():
         "quaternary_channels": args.quaternary_channels,
         "quaternary_layers": args.quaternary_layers,
         "hidden_ratio": args.hidden_ratio,
-        "degradation_features": 3,
     }
 
     upscaler = UltraZoom(**upscaler_args)
@@ -196,9 +194,8 @@ def main():
 
     l2_loss_function = MSELoss()
     vgg_loss_function = VGGLoss()
-    qa_loss_function = MSELoss()
 
-    combined_loss_function = AdaptiveMultitaskLoss(4).to(args.device)
+    combined_loss_function = BalancedMultitaskLoss()
 
     vgg_loss_function = torch.compile(vgg_loss_function)
 
@@ -208,10 +205,6 @@ def main():
     print(f"Perceptual loss function has {vgg_loss_function.num_params:,} parameters")
 
     upscaler_optimizer = AdamW(upscaler.parameters(), lr=args.upscaler_learning_rate)
-
-    combined_loss_optimizer = SGD(
-        combined_loss_function.parameters(), lr=args.adaptive_loss_learning_rate
-    )
 
     psnr_metric = PeakSignalNoiseRatio(data_range=1.0).to(args.device)
     ssim_metric = StructuralSimilarityIndexMeasure().to(args.device)
@@ -227,9 +220,6 @@ def main():
         upscaler.load_state_dict(checkpoint["upscaler"])
         upscaler_optimizer.load_state_dict(checkpoint["upscaler_optimizer"])
 
-        combined_loss_function.load_state_dict(checkpoint["combined_loss"])
-        combined_loss_optimizer.load_state_dict(checkpoint["combined_loss_optimizer"])
-
         starting_epoch += checkpoint["epoch"]
 
         print("Previous checkpoint resumed successfully")
@@ -242,26 +232,23 @@ def main():
 
     for epoch in range(starting_epoch, args.num_epochs + 1):
         total_l2_loss, total_vgg22_loss, total_vgg54_loss = 0.0, 0.0, 0.0
-        total_qa_loss, total_gradient_norm = 0.0, 0.0
+        total_gradient_norm = 0.0
         total_batches, total_steps = 0, 0
 
-        for step, (x, y_orig, y_deg) in enumerate(
+        for step, (x, y, _) in enumerate(
             tqdm(train_loader, desc=f"Epoch {epoch}", leave=False), start=1
         ):
             x = x.to(args.device, non_blocking=True)
-            y_orig = y_orig.to(args.device, non_blocking=True)
-            y_deg = y_deg.to(args.device, non_blocking=True)
+            y = y.to(args.device, non_blocking=True)
 
             with amp_context:
-                y_pred_sr, y_pred_qa = upscaler.forward(x)
+                y_pred = upscaler.forward(x)
 
-                l2_loss = l2_loss_function.forward(y_pred_sr, y_orig)
-                vgg22_loss, vgg54_loss = vgg_loss_function.forward(y_pred_sr, y_orig)
-
-                qa_loss = qa_loss_function.forward(y_pred_qa, y_deg)
+                l2_loss = l2_loss_function.forward(y_pred, y)
+                vgg22_loss, vgg54_loss = vgg_loss_function.forward(y_pred, y)
 
                 combined_loss = combined_loss_function.forward(
-                    torch.stack([l2_loss, vgg22_loss, vgg54_loss, qa_loss])
+                    torch.stack([l2_loss, vgg22_loss, vgg54_loss])
                 )
 
                 scaled_loss = combined_loss / args.gradient_accumulation_steps
@@ -272,10 +259,8 @@ def main():
                 norm = clip_grad_norm_(upscaler.parameters(), args.max_gradient_norm)
 
                 upscaler_optimizer.step()
-                combined_loss_optimizer.step()
 
                 upscaler_optimizer.zero_grad()
-                combined_loss_optimizer.zero_grad()
 
                 total_gradient_norm += norm.item()
 
@@ -284,37 +269,25 @@ def main():
             total_l2_loss += l2_loss.item()
             total_vgg22_loss += vgg22_loss.item()
             total_vgg54_loss += vgg54_loss.item()
-            total_qa_loss += qa_loss.item()
 
             total_batches += 1
 
         average_l2_loss = total_l2_loss / total_batches
         average_vgg22_loss = total_vgg22_loss / total_batches
         average_vgg54_loss = total_vgg54_loss / total_batches
-        average_qa_loss = total_qa_loss / total_batches
         average_gradient_norm = total_gradient_norm / total_steps
 
         logger.add_scalar("Pixel L2", average_l2_loss, epoch)
         logger.add_scalar("VGG22 L2", average_vgg22_loss, epoch)
         logger.add_scalar("VGG54 L2", average_vgg54_loss, epoch)
-        logger.add_scalar("QA L2", average_qa_loss, epoch)
         logger.add_scalar("Gradient Norm", average_gradient_norm, epoch)
-        logger.add_scalar("Pixel Weight", combined_loss_function.loss_weights[0], epoch)
-        logger.add_scalar("VGG22 Weight", combined_loss_function.loss_weights[1], epoch)
-        logger.add_scalar("VGG54 Weight", combined_loss_function.loss_weights[2], epoch)
-        logger.add_scalar("QA Weight", combined_loss_function.loss_weights[3], epoch)
 
         print(
             f"Epoch {epoch}:",
             f"Pixel L2: {average_l2_loss:.4},",
             f"VGG22 L2: {average_vgg22_loss:.4},",
             f"VGG54 L2: {average_vgg54_loss:.4},",
-            f"QA L2: {average_qa_loss:.4},",
             f"Gradient Norm: {average_gradient_norm:.4},",
-            f"Pixel Weight: {combined_loss_function.loss_weights[0]:.4},",
-            f"VGG22 Weight: {combined_loss_function.loss_weights[1]:.4},",
-            f"VGG54 Weight: {combined_loss_function.loss_weights[2]:.4},",
-            f"QA Weight: {combined_loss_function.loss_weights[3]:.4}",
         )
 
         if epoch % args.eval_interval == 0:
@@ -356,8 +329,6 @@ def main():
                 "upscaler_args": upscaler_args,
                 "upscaler": upscaler.state_dict(),
                 "upscaler_optimizer": upscaler_optimizer.state_dict(),
-                "combined_loss": combined_loss_function.state_dict(),
-                "combined_loss_optimizer": combined_loss_optimizer.state_dict(),
             }
 
             torch.save(checkpoint, args.checkpoint_path)

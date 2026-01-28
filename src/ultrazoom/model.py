@@ -22,6 +22,7 @@ from torch.nn import (
     Parameter,
 )
 
+from torch.nn.init import kaiming_normal_
 from torch.nn.functional import pad
 
 from torch.nn.utils.parametrize import (
@@ -59,7 +60,6 @@ class UltraZoom(Module, PyTorchModelHubMixin):
         quaternary_channels: int,
         quaternary_layers: int,
         hidden_ratio: int,
-        degradation_features: int,
     ):
         super().__init__()
 
@@ -79,10 +79,9 @@ class UltraZoom(Module, PyTorchModelHubMixin):
             hidden_ratio,
         )
 
-        self.qa_head = QualityAssessor(primary_channels, degradation_features)
-        self.sr_head = SuperResolver(primary_channels, upscale_ratio)
+        self.head = SuperResolver(primary_channels, hidden_ratio, upscale_ratio)
 
-        self.skip = AdaptiveResidualMix(3)
+        self.skip = ResidualConnection()
 
         self.upscale_ratio = upscale_ratio
 
@@ -96,6 +95,9 @@ class UltraZoom(Module, PyTorchModelHubMixin):
     def num_trainable_params(self) -> int:
         return sum(param.numel() for param in self.parameters() if param.requires_grad)
 
+    def initialize_weights(self) -> None:
+        pass
+
     def freeze_parameters(self) -> None:
         """Freeze all model parameters to prevent them from being updated during training."""
 
@@ -107,20 +109,14 @@ class UltraZoom(Module, PyTorchModelHubMixin):
 
         self.stem.add_weight_norms()
         self.unet.add_weight_norms()
-        self.skip.add_weight_norms()
-
-        self.sr_head.add_weight_norms()
-        self.qa_head.add_weight_norms()
+        self.head.add_weight_norms()
 
     def add_lora_adapters(self, rank: int, alpha: float) -> None:
         """Add LoRA adapters to all layers in the network."""
 
         self.stem.add_lora_adapters(rank, alpha)
         self.unet.add_lora_adapters(rank, alpha)
-        self.skip.add_lora_adapters(rank, alpha)
-
-        self.sr_head.add_lora_adapters(rank, alpha)
-        self.qa_head.add_lora_adapters(rank, alpha)
+        self.head.add_lora_adapters(rank, alpha)
 
     def remove_parameterizations(self) -> None:
         """Remove all network parameterizations."""
@@ -151,13 +147,11 @@ class UltraZoom(Module, PyTorchModelHubMixin):
 
         z = self.stem.forward(x)
         z = self.unet.forward(z)
+        z = self.head.forward(z)
 
-        z_sr = self.sr_head.forward(z)
-        z_qa = self.qa_head.forward(z)
+        z = self.skip.forward(s, z)
 
-        z_sr = self.skip.forward(s, z_sr)
-
-        return z_sr, z_qa
+        return z
 
     @torch.inference_mode()
     def upscale(self, x: Tensor) -> Tensor:
@@ -168,7 +162,7 @@ class UltraZoom(Module, PyTorchModelHubMixin):
             x: Input image tensor of shape (B, 3, H, W).
         """
 
-        z, _ = self.forward(x)
+        z = self.forward(x)
 
         z = torch.clamp(z, 0, 1)
 
@@ -205,6 +199,9 @@ class FanOutProjection(Module):
         ), "Output channels must be greater than input channels."
 
         self.conv = Conv2d(in_channels, out_channels, kernel_size=1)
+
+    def initialize_weights(self) -> None:
+        kaiming_normal_(self.conv.weight, nonlinearity="linear")
 
     def add_weight_norms(self) -> None:
         self.conv = weight_norm(self.conv)
@@ -427,21 +424,17 @@ class Encoder(Module):
 
 
 class EncoderBlock(Module):
-    """A single encoder block consisting of two stages and a residual connection."""
-
     def __init__(self, num_channels: int, hidden_ratio: int):
         super().__init__()
 
         self.stage1 = InvertedBottleneck(num_channels, hidden_ratio)
-        self.stage2 = AdaptiveResidualMix(num_channels)
+        self.stage2 = ResidualConnection()
 
     def add_weight_norms(self) -> None:
         self.stage1.add_weight_norms()
-        self.stage2.add_weight_norms()
 
     def add_lora_adapters(self, rank: int, alpha: float) -> None:
         self.stage1.add_lora_adapters(rank, alpha)
-        self.stage2.add_lora_adapters(rank, alpha)
 
     def forward(self, x: Tensor) -> Tensor:
         z = self.stage1.forward(x)
@@ -555,9 +548,9 @@ class Decoder(Module):
         self.upsample2 = SubpixelConv2d(secondary_channels, tertiary_channels, 2)
         self.upsample3 = SubpixelConv2d(tertiary_channels, quaternary_channels, 2)
 
-        self.skip1 = AdaptiveResidualMix(secondary_channels)
-        self.skip2 = AdaptiveResidualMix(tertiary_channels)
-        self.skip3 = AdaptiveResidualMix(quaternary_channels)
+        self.skip1 = ResidualConnection()
+        self.skip2 = ResidualConnection()
+        self.skip3 = ResidualConnection()
 
         self.checkpoint = lambda layer, x: layer.forward(x)
 
@@ -594,10 +587,6 @@ class Decoder(Module):
         self.upsample1.add_lora_adapters(rank, alpha)
         self.upsample2.add_lora_adapters(rank, alpha)
         self.upsample3.add_lora_adapters(rank, alpha)
-
-        self.skip1.add_lora_adapters(rank, alpha)
-        self.skip2.add_lora_adapters(rank, alpha)
-        self.skip3.add_lora_adapters(rank, alpha)
 
     def enable_activation_checkpointing(self) -> None:
         """
@@ -684,8 +673,24 @@ class Decoder(Module):
         return z
 
 
-class DecoderBlock(EncoderBlock):
-    pass
+class DecoderBlock(Module):
+    def __init__(self, num_channels: int, hidden_ratio: int):
+        super().__init__()
+
+        self.stage1 = InvertedBottleneck(num_channels, hidden_ratio)
+        self.stage2 = ResidualConnection()
+
+    def add_weight_norms(self) -> None:
+        self.stage1.add_weight_norms()
+
+    def add_lora_adapters(self, rank: int, alpha: float) -> None:
+        self.stage1.add_lora_adapters(rank, alpha)
+
+    def forward(self, x: Tensor) -> Tensor:
+        z = self.stage1.forward(x)
+        z = self.stage2.forward(x, z)
+
+        return z
 
 
 class PixelCrush(Module):
@@ -850,7 +855,7 @@ class Bouncer(Module):
             quaternary_layers,
         )
 
-        self.head = FakeDiscriminator(quaternary_channels)
+        self.head = ImageAuthenticator(quaternary_channels)
 
     @property
     def num_trainable_params(self) -> int:
@@ -1001,7 +1006,7 @@ class DetectorBlock(Module):
 
         self.conv2 = Conv2d(hidden_channels, num_channels, kernel_size=1)
 
-        self.skip = AdaptiveResidualMix(num_channels)
+        self.skip = ResidualConnection()
 
         self.silu = SiLU()
 
@@ -1050,7 +1055,7 @@ class AdaptiveResidualMix(Module):
         beta = self.conv.forward(xz)
         beta = self.sigmoid.forward(beta)
 
-        # Alpha scalar allows learnable identity mapping.
+        # Alpha scalar allows learnable global identity mapping.
         alpha = self.sigmoid.forward(self.alpha)
 
         w = alpha * beta
@@ -1059,7 +1064,21 @@ class AdaptiveResidualMix(Module):
 
         z = x_hat + z_hat
 
-        return z
+        return x + z
+
+
+class ResidualConnection(Module):
+    """
+    An equally-weighted residual connection that adds the input to the residual feature maps.
+    """
+
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, x: Tensor, z: Tensor) -> Tensor:
+        assert x.shape == z.shape, "Input and residual must have the same shape."
+
+        return x + z
 
 
 class DepthwiseSeparableConv2d(Module):
@@ -1115,9 +1134,9 @@ class DepthwiseSeparableConv2d(Module):
 
 
 class SuperResolver(Module):
-    """A decoder head for upscaling the input feature maps beyond their original size."""
+    """A decoder head for progressively upscaling the input feature maps beyond their original size."""
 
-    def __init__(self, in_channels: int, upscale_ratio: int):
+    def __init__(self, in_channels: int, hidden_ratio: int, upscale_ratio: int):
         super().__init__()
 
         assert upscale_ratio in {
@@ -1128,22 +1147,26 @@ class SuperResolver(Module):
 
         num_layers = int(log2(upscale_ratio))
 
-        self.upsample = Sequential(
-            *[SR2XBlock(in_channels, in_channels) for _ in range(num_layers - 1)]
+        self.layers = ModuleList(
+            [
+                SR2XBlock(in_channels, hidden_ratio, in_channels)
+                for _ in range(num_layers - 1)
+            ]
         )
 
-        self.upsample.append(SR2XBlock(in_channels, 3))
+        self.layers.append(SR2XBlock(in_channels, hidden_ratio, 3))
 
     def add_weight_norms(self) -> None:
-        for module in self.upsample:
+        for module in self.layers:
             module.add_weight_norms()
 
     def add_lora_adapters(self, rank: int, alpha: float) -> None:
-        for module in self.upsample:
+        for module in self.layers:
             module.add_lora_adapters(rank, alpha)
 
-    def forward(self, x: Tensor) -> Tensor:
-        z = self.upsample.forward(x)
+    def forward(self, z: Tensor) -> Tensor:
+        for module in self.layers:
+            z = module.forward(z)
 
         return z
 
@@ -1151,70 +1174,33 @@ class SuperResolver(Module):
 class SR2XBlock(Module):
     """A 2X super-resolution block."""
 
-    def __init__(self, in_channels: int, out_channels: int):
+    def __init__(self, in_channels: int, hidden_ratio: int, out_channels: int):
         super().__init__()
 
-        self.conv = Conv2d(in_channels, in_channels, kernel_size=3, padding=1)
-
-        self.silu = SiLU()
+        # self.refiner = InvertedBottleneck(in_channels, hidden_ratio)
 
         self.upscale = SubpixelConv2d(in_channels, out_channels, 2)
 
     def add_weight_norms(self) -> None:
-        self.conv = weight_norm(self.conv)
-
+        # self.refiner.add_weight_norms()
         self.upscale.add_weight_norms()
 
     def add_lora_adapters(self, rank: int, alpha: float) -> None:
-        register_parametrization(
-            self.conv,
-            "weight",
-            ChannelLoRA(self.conv, rank, alpha),
-        )
-
+        # self.refiner.add_lora_adapters(rank, alpha)
         self.upscale.add_lora_adapters(rank, alpha)
 
     def forward(self, x: Tensor) -> Tensor:
-        z = self.conv.forward(x)
-        z = self.silu.forward(z)
-        z = self.upscale.forward(z)
+        # z = self.refiner.forward(x)
+        z = self.upscale.forward(x)
 
         return z
 
 
-class QualityAssessor(Module):
-    """A decoder head for estimating the amount of degradation present in the input image."""
-
-    def __init__(self, num_channels: int, num_features: int):
-        super().__init__()
-
-        self.conv = Conv2d(num_channels, num_features, kernel_size=3, padding=1)
-
-        self.pool = AdaptiveAvgPool2d(1)
-
-        self.flatten = Flatten(start_dim=1)
-
-    def add_weight_norms(self) -> None:
-        self.conv = weight_norm(self.conv)
-
-    def add_lora_adapters(self, rank: int, alpha: float) -> None:
-        register_parametrization(
-            self.conv,
-            "weight",
-            ChannelLoRA(self.conv, rank, alpha),
-        )
-
-    def forward(self, x: Tensor) -> Tensor:
-        z = self.conv.forward(x)
-        z = self.pool.forward(z)
-
-        z = self.flatten.forward(z)
-
-        return z
-
-
-class FakeDiscriminator(Module):
-    """A simple binary classification head that preserves positional invariance."""
+class ImageAuthenticator(Module):
+    """
+    A simple binary classification head that preserves positional invariance used
+    to authenticate real images.
+    """
 
     def __init__(self, num_channels: int):
         super().__init__()

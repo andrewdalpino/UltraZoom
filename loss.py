@@ -82,17 +82,13 @@ class RelativisticBCELoss(Module):
 class BalancedMultitaskLoss(Module):
     """A dynamic multitask loss weighting where each task contributes equally."""
 
-    EPSILON = 1e-8
-
     def __init__(self):
         super().__init__()
 
     def forward(self, losses: Tensor) -> Tensor:
-        denominator = losses.detach() + self.EPSILON
+        combined_loss = losses / losses.detach()
 
-        combined_loss = losses / denominator
-
-        combined_loss = combined_loss.mean()
+        combined_loss = combined_loss.sum()
 
         return combined_loss
 

@@ -96,7 +96,11 @@ class UltraZoom(Module, PyTorchModelHubMixin):
         return sum(param.numel() for param in self.parameters() if param.requires_grad)
 
     def initialize_weights(self) -> None:
-        pass
+        """Initialize all model weights using Kaiming normal initialization."""
+
+        self.stem.initialize_weights()
+        self.unet.initialize_weights()
+        self.head.initialize_weights()
 
     def freeze_parameters(self) -> None:
         """Freeze all model parameters to prevent them from being updated during training."""
@@ -201,7 +205,7 @@ class FanOutProjection(Module):
         self.conv = Conv2d(in_channels, out_channels, kernel_size=1)
 
     def initialize_weights(self) -> None:
-        kaiming_normal_(self.conv.weight, nonlinearity="linear")
+        kaiming_normal_(self.conv.weight)
 
     def add_weight_norms(self) -> None:
         self.conv = weight_norm(self.conv)
@@ -273,6 +277,10 @@ class UNet(Module):
             floor(primary_layers / 2),
             hidden_ratio,
         )
+
+    def initialize_weights(self) -> None:
+        self.encoder.initialize_weights()
+        self.decoder.initialize_weights()
 
     def add_weight_norms(self) -> None:
         self.encoder.add_weight_norms()
@@ -357,6 +365,23 @@ class Encoder(Module):
 
         self.checkpoint = lambda layer, x: layer.forward(x)
 
+    def initialize_weights(self) -> None:
+        for layer in self.stage1:
+            layer.initialize_weights()
+
+        for layer in self.stage2:
+            layer.initialize_weights()
+
+        for layer in self.stage3:
+            layer.initialize_weights()
+
+        for layer in self.stage4:
+            layer.initialize_weights()
+
+        self.downsample1.initialize_weights()
+        self.downsample2.initialize_weights()
+        self.downsample3.initialize_weights()
+
     def add_weight_norms(self) -> None:
         for layer in self.stage1:
             layer.add_weight_norms()
@@ -428,7 +453,10 @@ class EncoderBlock(Module):
         super().__init__()
 
         self.stage1 = InvertedBottleneck(num_channels, hidden_ratio)
-        self.stage2 = ResidualConnection()
+        self.stage2 = AdaptiveResidualMix(num_channels)
+
+    def initialize_weights(self) -> None:
+        self.stage1.initialize_weights()
 
     def add_weight_norms(self) -> None:
         self.stage1.add_weight_norms()
@@ -463,6 +491,10 @@ class InvertedBottleneck(Module):
         )
 
         self.silu = SiLU()
+
+    def initialize_weights(self) -> None:
+        kaiming_normal_(self.conv1.weight)
+        kaiming_normal_(self.conv2.weight)
 
     def add_weight_norms(self) -> None:
         self.conv1 = weight_norm(self.conv1)
@@ -548,11 +580,28 @@ class Decoder(Module):
         self.upsample2 = SubpixelConv2d(secondary_channels, tertiary_channels, 2)
         self.upsample3 = SubpixelConv2d(tertiary_channels, quaternary_channels, 2)
 
-        self.skip1 = ResidualConnection()
-        self.skip2 = ResidualConnection()
-        self.skip3 = ResidualConnection()
+        self.skip1 = AdaptiveResidualMix(secondary_channels)
+        self.skip2 = AdaptiveResidualMix(tertiary_channels)
+        self.skip3 = AdaptiveResidualMix(quaternary_channels)
 
         self.checkpoint = lambda layer, x: layer.forward(x)
+
+    def initialize_weights(self) -> None:
+        for layer in self.stage1:
+            layer.initialize_weights()
+
+        for layer in self.stage2:
+            layer.initialize_weights()
+
+        for layer in self.stage3:
+            layer.initialize_weights()
+
+        for layer in self.stage4:
+            layer.initialize_weights()
+
+        self.upsample1.initialize_weights()
+        self.upsample2.initialize_weights()
+        self.upsample3.initialize_weights()
 
     def add_weight_norms(self) -> None:
         for layer in self.stage1:
@@ -680,6 +729,9 @@ class DecoderBlock(Module):
         self.stage1 = InvertedBottleneck(num_channels, hidden_ratio)
         self.stage2 = ResidualConnection()
 
+    def initialize_weights(self) -> None:
+        self.stage1.initialize_weights()
+
     def add_weight_norms(self) -> None:
         self.stage1.add_weight_norms()
 
@@ -715,6 +767,9 @@ class PixelCrush(Module):
             stride=crush_factor,
             bias=False,
         )
+
+    def initialize_weights(self) -> None:
+        kaiming_normal_(self.conv.weight)
 
     def add_weight_norms(self) -> None:
         self.conv = weight_norm(self.conv)
@@ -760,6 +815,9 @@ class SubpixelConv2d(Module):
         )
 
         self.shuffle = PixelShuffle(upscale_ratio)
+
+    def initialize_weights(self) -> None:
+        kaiming_normal_(self.conv.weight)
 
     def add_weight_norms(self) -> None:
         self.conv = weight_norm(self.conv)
@@ -1025,6 +1083,20 @@ class DetectorBlock(Module):
         return z
 
 
+class ResidualConnection(Module):
+    """
+    An equally-weighted residual connection that adds the input to the residual feature maps.
+    """
+
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, x: Tensor, z: Tensor) -> Tensor:
+        assert x.shape == z.shape, "Input and residual must have the same shape."
+
+        return x + z
+
+
 class AdaptiveResidualMix(Module):
     """
     A residual connection that adaptively mixes the input with the residual feature maps.
@@ -1033,11 +1105,14 @@ class AdaptiveResidualMix(Module):
     def __init__(self, num_channels: int):
         super().__init__()
 
-        self.conv = Conv2d(2 * num_channels, 1, kernel_size=3, padding=1)
+        self.conv = Conv2d(2 * num_channels, num_channels, kernel_size=1)
 
         self.alpha = Parameter(torch.Tensor([0.3]))
 
         self.sigmoid = Sigmoid()
+
+    def initialize_weights(self) -> None:
+        kaiming_normal_(self.conv.weight)
 
     def add_weight_norms(self) -> None:
         self.conv = weight_norm(self.conv)
@@ -1063,20 +1138,6 @@ class AdaptiveResidualMix(Module):
         x_hat, z_hat = (1 - w) * x, w * z
 
         z = x_hat + z_hat
-
-        return x + z
-
-
-class ResidualConnection(Module):
-    """
-    An equally-weighted residual connection that adds the input to the residual feature maps.
-    """
-
-    def __init__(self):
-        super().__init__()
-
-    def forward(self, x: Tensor, z: Tensor) -> Tensor:
-        assert x.shape == z.shape, "Input and residual must have the same shape."
 
         return x + z
 
@@ -1156,6 +1217,10 @@ class SuperResolver(Module):
 
         self.layers.append(SR2XBlock(in_channels, hidden_ratio, 3))
 
+    def initialize_weights(self) -> None:
+        for module in self.layers:
+            module.initialize_weights()
+
     def add_weight_norms(self) -> None:
         for module in self.layers:
             module.add_weight_norms()
@@ -1177,21 +1242,25 @@ class SR2XBlock(Module):
     def __init__(self, in_channels: int, hidden_ratio: int, out_channels: int):
         super().__init__()
 
-        # self.refiner = InvertedBottleneck(in_channels, hidden_ratio)
+        self.refiner = InvertedBottleneck(in_channels, hidden_ratio)
 
         self.upscale = SubpixelConv2d(in_channels, out_channels, 2)
 
+    def initialize_weights(self) -> None:
+        self.refiner.initialize_weights()
+        self.upscale.initialize_weights()
+
     def add_weight_norms(self) -> None:
-        # self.refiner.add_weight_norms()
+        self.refiner.add_weight_norms()
         self.upscale.add_weight_norms()
 
     def add_lora_adapters(self, rank: int, alpha: float) -> None:
-        # self.refiner.add_lora_adapters(rank, alpha)
+        self.refiner.add_lora_adapters(rank, alpha)
         self.upscale.add_lora_adapters(rank, alpha)
 
     def forward(self, x: Tensor) -> Tensor:
-        # z = self.refiner.forward(x)
-        z = self.upscale.forward(x)
+        z = self.refiner.forward(x)
+        z = self.upscale.forward(z)
 
         return z
 

@@ -199,7 +199,8 @@ def main():
     critic = critic.to(args.device)
 
     pixel_l2_loss = MSELoss()
-    stage_1_l2_loss = MSELoss()
+    stage_2_l2_loss = MSELoss()
+    stage_3_l2_loss = MSELoss()
     bce_loss = RelativisticBCELoss()
 
     combined_loss_function = BalancedMultitaskLoss()
@@ -244,7 +245,7 @@ def main():
     critic.train()
 
     for epoch in range(starting_epoch, args.num_epochs + 1):
-        total_pixel_l2, total_stage_1_l2 = 0.0, 0.0
+        total_pixel_l2, total_stage_2_l2, total_stage_3_l2 = 0.0, 0.0, 0.0
         total_u_bce, total_c_bce = 0.0, 0.0
         total_u_gradient_norm, total_c_gradient_norm = 0.0, 0.0
         total_batches, total_steps = 0, 0
@@ -293,15 +294,16 @@ def main():
                 with amp_context:
                     pixel_l2 = pixel_l2_loss.forward(u_pred, y)
 
-                    z1_fake, _, _, _, c_pred_fake = critic.forward(u_pred)
-                    z1_real, _, _, _, c_pred_real = critic.forward(y)
+                    _, z2_fake, z3_fake, _, c_pred_fake = critic.forward(u_pred)
+                    _, z2_real, z3_real, _, c_pred_real = critic.forward(y)
 
-                    stage_1_l2 = stage_1_l2_loss.forward(z1_fake, z1_real)
+                    stage_2_l2 = stage_2_l2_loss.forward(z2_fake, z2_real)
+                    stage_3_l2 = stage_3_l2_loss.forward(z3_fake, z3_real)
 
                     u_bce = bce_loss.forward(c_pred_real, c_pred_fake, y_fake, y_real)
 
                     combined_u_loss = combined_loss_function.forward(
-                        torch.stack([pixel_l2, stage_1_l2, u_bce])
+                        torch.stack([pixel_l2, stage_2_l2, stage_3_l2, u_bce])
                     )
 
                     scaled_u_loss = combined_u_loss / args.gradient_accumulation_steps
@@ -320,13 +322,15 @@ def main():
                     total_u_gradient_norm += u_norm.item()
 
                 total_pixel_l2 += pixel_l2.item()
-                total_stage_1_l2 += stage_1_l2.item()
+                total_stage_2_l2 += stage_2_l2.item()
+                total_stage_3_l2 += stage_3_l2.item()
                 total_u_bce += u_bce.item()
 
             total_batches += 1
 
         average_pixel_l2 = total_pixel_l2 / total_batches
-        average_stage_1_l2 = total_stage_1_l2 / total_batches
+        average_stage_2_l2 = total_stage_2_l2 / total_batches
+        average_stage_3_l2 = total_stage_3_l2 / total_batches
         average_u_bce = total_u_bce / total_batches
         average_c_bce = total_c_bce / total_batches
 
@@ -334,7 +338,8 @@ def main():
         average_c_gradient_norm = total_c_gradient_norm / total_steps
 
         logger.add_scalar("Pixel L2", average_pixel_l2, epoch)
-        logger.add_scalar("Stage 1 L2", average_stage_1_l2, epoch)
+        logger.add_scalar("Stage 2 L2", average_stage_2_l2, epoch)
+        logger.add_scalar("Stage 3 L2", average_stage_3_l2, epoch)
         logger.add_scalar("Upscaler BCE", average_u_bce, epoch)
         logger.add_scalar("Upscaler Norm", average_u_gradient_norm, epoch)
         logger.add_scalar("Critic BCE", average_c_bce, epoch)
@@ -343,7 +348,8 @@ def main():
         print(
             f"Epoch {epoch}:",
             f"Pixel L2: {average_pixel_l2:.5},",
-            f"Stage 1 L2: {average_stage_1_l2:.5},",
+            f"Stage 2 L2: {average_stage_2_l2:.5},",
+            f"Stage 3 L2: {average_stage_3_l2:.5},",
             f"Upscaler BCE: {average_u_bce:.5},",
             f"Upscaler Norm: {average_u_gradient_norm:.4},",
             f"Critic BCE: {average_c_bce:.5},",

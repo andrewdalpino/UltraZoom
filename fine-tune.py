@@ -198,12 +198,9 @@ def main():
 
     critic = critic.to(args.device)
 
-    pixel_l2_loss = MSELoss()
-    stage_2_l2_loss = MSELoss()
-    stage_3_l2_loss = MSELoss()
+    l2_loss = MSELoss()
     bce_loss = RelativisticBCELoss()
-
-    combined_loss_function = BalancedMultitaskLoss()
+    combined_loss = BalancedMultitaskLoss()
 
     upscaler_optimizer = AdamW(upscaler.parameters(), lr=args.upscaler_learning_rate)
     critic_optimizer = AdamW(critic.parameters(), lr=args.critic_learning_rate)
@@ -246,28 +243,29 @@ def main():
 
     for epoch in range(starting_epoch, args.num_epochs + 1):
         total_pixel_l2, total_stage_2_l2, total_stage_3_l2 = 0.0, 0.0, 0.0
-        total_u_bce, total_c_bce = 0.0, 0.0
+        total_degradation_l2, total_u_bce, total_c_bce = 0.0, 0.0, 0.0
         total_u_gradient_norm, total_c_gradient_norm = 0.0, 0.0
         total_batches, total_steps = 0, 0
 
         is_warmup = epoch <= args.critic_warmup_epochs
 
-        for step, (x, y, _) in enumerate(
+        for step, (x, y_sr, y_deg) in enumerate(
             tqdm(train_loader, desc=f"Epoch {epoch}", leave=False), start=1
         ):
             x = x.to(args.device, non_blocking=True)
-            y = y.to(args.device, non_blocking=True)
+            y_sr = y_sr.to(args.device, non_blocking=True)
+            y_deg = y_deg.to(args.device, non_blocking=True)
 
-            y_real = torch.full((y.size(0), 1), 1.0).to(args.device)
-            y_fake = torch.full((y.size(0), 1), 0.0).to(args.device)
+            y_real = torch.full((y_sr.size(0), 1), 1.0).to(args.device)
+            y_fake = torch.full((y_sr.size(0), 1), 0.0).to(args.device)
 
             update_this_step = step % args.gradient_accumulation_steps == 0
 
             with amp_context:
-                u_pred = upscaler.forward(x)
+                u_pred_sr, u_pred_deg = upscaler.forward(x)
 
-                _, _, _, _, c_pred_fake = critic.forward(u_pred.detach())
-                _, _, _, _, c_pred_real = critic.forward(y)
+                _, _, _, _, c_pred_fake = critic.forward(u_pred_sr.detach())
+                _, _, _, _, c_pred_real = critic.forward(y_sr)
 
                 c_bce = bce_loss.forward(c_pred_real, c_pred_fake, y_real, y_fake)
 
@@ -292,21 +290,23 @@ def main():
 
             if not is_warmup:
                 with amp_context:
-                    pixel_l2 = pixel_l2_loss.forward(u_pred, y)
+                    pixel_l2 = l2_loss.forward(u_pred_sr, y_sr)
 
-                    _, z2_fake, z3_fake, _, c_pred_fake = critic.forward(u_pred)
-                    _, z2_real, z3_real, _, c_pred_real = critic.forward(y)
+                    degradation_l2 = l2_loss.forward(u_pred_deg, y_deg)
 
-                    stage_2_l2 = stage_2_l2_loss.forward(z2_fake, z2_real)
-                    stage_3_l2 = stage_3_l2_loss.forward(z3_fake, z3_real)
+                    _, z2_fake, z3_fake, _, c_pred_fake = critic.forward(u_pred_sr)
+                    _, z2_real, z3_real, _, c_pred_real = critic.forward(y_sr)
+
+                    stage_2_l2 = l2_loss.forward(z2_fake, z2_real)
+                    stage_3_l2 = l2_loss.forward(z3_fake, z3_real)
 
                     u_bce = bce_loss.forward(c_pred_real, c_pred_fake, y_fake, y_real)
 
-                    combined_u_loss = combined_loss_function.forward(
-                        torch.stack([pixel_l2, stage_2_l2, stage_3_l2, u_bce])
+                    u_loss = combined_loss.forward(
+                        torch.stack([pixel_l2, stage_2_l2, stage_3_l2, degradation_l2, u_bce])
                     )
 
-                    scaled_u_loss = combined_u_loss / args.gradient_accumulation_steps
+                    scaled_u_loss = u_loss / args.gradient_accumulation_steps
 
                 scaled_u_loss.backward()
 
@@ -324,6 +324,7 @@ def main():
                 total_pixel_l2 += pixel_l2.item()
                 total_stage_2_l2 += stage_2_l2.item()
                 total_stage_3_l2 += stage_3_l2.item()
+                total_degradation_l2 += degradation_l2.item()
                 total_u_bce += u_bce.item()
 
             total_batches += 1
@@ -331,6 +332,7 @@ def main():
         average_pixel_l2 = total_pixel_l2 / total_batches
         average_stage_2_l2 = total_stage_2_l2 / total_batches
         average_stage_3_l2 = total_stage_3_l2 / total_batches
+        average_degradation_l2 = total_degradation_l2 / total_batches
         average_u_bce = total_u_bce / total_batches
         average_c_bce = total_c_bce / total_batches
 
@@ -340,6 +342,7 @@ def main():
         logger.add_scalar("Pixel L2", average_pixel_l2, epoch)
         logger.add_scalar("Stage 2 L2", average_stage_2_l2, epoch)
         logger.add_scalar("Stage 3 L2", average_stage_3_l2, epoch)
+        logger.add_scalar("Degradation L2", average_degradation_l2, epoch)
         logger.add_scalar("Upscaler BCE", average_u_bce, epoch)
         logger.add_scalar("Upscaler Norm", average_u_gradient_norm, epoch)
         logger.add_scalar("Critic BCE", average_c_bce, epoch)
@@ -350,6 +353,7 @@ def main():
             f"Pixel L2: {average_pixel_l2:.5},",
             f"Stage 2 L2: {average_stage_2_l2:.5},",
             f"Stage 3 L2: {average_stage_3_l2:.5},",
+            f"Degradation L2: {average_degradation_l2:.5},",
             f"Upscaler BCE: {average_u_bce:.5},",
             f"Upscaler Norm: {average_u_gradient_norm:.4},",
             f"Critic BCE: {average_c_bce:.5},",

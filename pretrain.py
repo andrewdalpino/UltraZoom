@@ -193,10 +193,9 @@ def main():
 
     upscaler = upscaler.to(args.device)
 
-    l2_loss_function = MSELoss()
-    vgg_loss_function = VGGLoss()
-
-    combined_loss_function = BalancedMultitaskLoss()
+    l2_loss = MSELoss()
+    vgg_loss = VGGLoss()
+    combined_loss = BalancedMultitaskLoss()
 
     vgg_loss_function = torch.compile(vgg_loss_function)
 
@@ -246,18 +245,17 @@ def main():
             with amp_context:
                 y_pred_sr, y_pred_deg = upscaler.forward(x)
 
-                pixel_l2_loss = l2_loss_function.forward(y_pred_sr, y_sr)
-                vgg22_loss, vgg54_loss = vgg_loss_function.forward(y_pred_sr, y_sr)
+                pixel_l2_loss = l2_loss.forward(y_pred_sr, y_sr)
+                vgg22_loss, vgg54_loss = vgg_loss.forward(y_pred_sr, y_sr)
+                degradation_loss = l2_loss.forward(y_pred_deg, y_deg)
 
-                degradation_loss = l2_loss_function.forward(y_pred_deg, y_deg)
-
-                combined_loss = combined_loss_function.forward(
+                loss = combined_loss.forward(
                     torch.stack(
                         [pixel_l2_loss, vgg22_loss, vgg54_loss, degradation_loss]
                     )
                 )
 
-                scaled_loss = combined_loss / args.gradient_accumulation_steps
+                scaled_loss = loss / args.gradient_accumulation_steps
 
             scaled_loss.backward()
 

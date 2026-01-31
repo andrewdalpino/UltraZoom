@@ -1,32 +1,32 @@
-# Ultra Zoom™
+# MewZoom
 
-![UltraZoom Banner](https://raw.githubusercontent.com/andrewdalpino/UltraZoom/master/docs/images/ultrazoom_v1_banner.png)
+![MewZoom Banner](https://raw.githubusercontent.com/andrewdalpino/MewZoom/master/docs/images/mewzoom_v1_banner.png)
 
-A fast single image super-resolution (SISR) model for upscaling images with ultra high-quality. Ultra Zoom™ uses a two-stage "zoom in and enhance" mechanism that utilizes a fast deterministic upscaling algorithm to upscale the image and then enhances it through a steerable residual pathway that operates primarily in the low-resolution subspace of a deep neural network.
+A fast single image super-resolution (SISR) model for upscaling images with ultra high-quality. MewZoom™ uses a two-stage "zoom in and enhance" mechanism that utilizes a fast deterministic upscaling algorithm to upscale the image and then enhances it through a steerable residual pathway that operates primarily in the low-resolution subspace of a deep neural network.
 
 ## Key Features
 
-- **Fast and scalable**: Ultra Zoom™ uses a unique "zoom in and enhance" mechanism that combines the speed of deterministic bicubic interpolation with the power of a deep neural network.
+- **Fast and scalable**: MewZoom uses a unique "zoom in and enhance" mechanism that combines the speed of deterministic bicubic interpolation with the power of a deep neural network.
 
-- **Controllable enhancements**: Ultra Zoom™ integrates channel-wise control modules directly into the architecture, allowing you to finely adjust the amount of denoising, deblurring, and deartifacting to suite your image source.
+- **Controllable enhancements**: MewZoom integrates channel-wise control modules directly into the architecture, allowing you to finely adjust the amount of denoising, deblurring, and deartifacting to suite your image source.
 
-- **Full RGB**: Unlike many efficient SR models that only operate in the luminance domain, Ultra Zoom™ operates within the full RGB color domain enhancing both luminance and chrominance for the best possible image quality.
+- **Full RGB**: Unlike many efficient SR models that only operate in the luminance domain, MewZoom operates within the full RGB color domain enhancing both luminance and chrominance for the best possible image quality.
 
 ## Demos
 
-View at full resolution for best results. More comparisons can be found [here](https://github.com/andrewdalpino/UltraZoom/tree/master/docs/images).
+View at full resolution for best results. More comparisons can be found [here](https://github.com/andrewdalpino/MewZoom/tree/master/docs/images).
 
-![UltraZoom 2X Comparison](https://raw.githubusercontent.com/andrewdalpino/UltraZoom/master/docs/images/cat-2x-comparison.png)
-![UltraZoom 3X Comparison](https://raw.githubusercontent.com/andrewdalpino/UltraZoom/master/docs/images/building-3x-comparison.png)
-![UltraZoom 4X Comparison](https://raw.githubusercontent.com/andrewdalpino/UltraZoom/master/docs/images/flower-4x-comparison.png)
+![MewZoom 2X Comparison](https://raw.githubusercontent.com/andrewdalpino/MewZoom/master/docs/images/cat-2x-comparison.png)
+![MewZoom 3X Comparison](https://raw.githubusercontent.com/andrewdalpino/MewZoom/master/docs/images/building-3x-comparison.png)
+![MewZoom 4X Comparison](https://raw.githubusercontent.com/andrewdalpino/MewZoom/master/docs/images/flower-4x-comparison.png)
 
 This comparison demonstrates the strength of the enhancements (deblurring, denoising, and deartifacting) applied to the upscaled image.
 
-![UltraZoom Ctrl Enhancement Comparison](https://raw.githubusercontent.com/andrewdalpino/UltraZoom/master/docs/images/ctrl-compare-all-3.png)
+![MewZoom Ctrl Enhancement Comparison](https://raw.githubusercontent.com/andrewdalpino/MewZoom/master/docs/images/ctrl-compare-all-3.png)
 
 This comparison demonstrates the individual enhancements applied in isolation.
 
-![UltraZoom Ctrl Enhancement Comparison](https://raw.githubusercontent.com/andrewdalpino/UltraZoom/master/docs/images/ctrl-compare-individual.png)
+![MewZoom Ctrl Enhancement Comparison](https://raw.githubusercontent.com/andrewdalpino/MewZoom/master/docs/images/ctrl-compare-individual.png)
 
 ## Pretrained Models
 
@@ -34,12 +34,12 @@ The following pretrained models are available on HuggingFace Hub.
 
 | Name | Upscale | Num Channels | Encoder Layers | Parameters | Control Modules | Library Version |
 | --- | --- | --- | --- | --- | --- | --- |
-| [andrewdalpino/UltraZoom-2X-Ctrl](https://huggingface.co/andrewdalpino/UltraZoom-2X-Ctrl) | 2X | 48 | 20 | 1.8M | Yes | 0.2.x |
-| [andrewdalpino/UltraZoom-3X-Ctrl](https://huggingface.co/andrewdalpino/UltraZoom-3X-Ctrl) | 3X | 54 | 30 | 3.5M | Yes | 0.2.x |
-| [andrewdalpino/UltraZoom-4X-Ctrl](https://huggingface.co/andrewdalpino/UltraZoom-4X-Ctrl) | 4X | 96 | 40 | 14M | Yes | 0.2.x |
-| [andrewdalpino/UltraZoom-2X](https://huggingface.co/andrewdalpino/UltraZoom-2X) | 2X | 48 | 20 | 1.8M | No | 0.1.x |
-| [andrewdalpino/UltraZoom-3X](https://huggingface.co/andrewdalpino/UltraZoom-3X) | 3X | 54 | 30 | 3.5M | No | 0.1.x |
-| [andrewdalpino/UltraZoom-4X](https://huggingface.co/andrewdalpino/UltraZoom-4X) | 4X | 96 | 40 | 14M | No | 0.1.x |
+| [andrewdalpino/MewZoom-2X-Ctrl](https://huggingface.co/andrewdalpino/MewZoom-2X-Ctrl) | 2X | 48 | 20 | 1.8M | Yes | 0.2.x |
+| [andrewdalpino/MewZoom-3X-Ctrl](https://huggingface.co/andrewdalpino/MewZoom-3X-Ctrl) | 3X | 54 | 30 | 3.5M | Yes | 0.2.x |
+| [andrewdalpino/MewZoom-4X-Ctrl](https://huggingface.co/andrewdalpino/MewZoom-4X-Ctrl) | 4X | 96 | 40 | 14M | Yes | 0.2.x |
+| [andrewdalpino/MewZoom-2X](https://huggingface.co/andrewdalpino/MewZoom-2X) | 2X | 48 | 20 | 1.8M | No | 0.1.x |
+| [andrewdalpino/MewZoom-3X](https://huggingface.co/andrewdalpino/MewZoom-3X) | 3X | 54 | 30 | 3.5M | No | 0.1.x |
+| [andrewdalpino/MewZoom-4X](https://huggingface.co/andrewdalpino/MewZoom-4X) | 4X | 96 | 40 | 14M | No | 0.1.x |
 
 ## Pretrained Examples
 
@@ -61,13 +61,13 @@ import torch
 from torchvision.io import decode_image, ImageReadMode
 from torchvision.transforms.v2 import ToDtype, ToPILImage
 
-from ultrazoom.model import UltraZoom
+from MewZoom.model import MewZoom
 
 
-model_name = "andrewdalpino/UltraZoom-2X"
+model_name = "andrewdalpino/MewZoom-2X"
 image_path = "./dataset/bird.png"
 
-model = UltraZoom.from_pretrained(model_name)
+model = MewZoom.from_pretrained(model_name)
 
 image_to_tensor = ToDtype(torch.float32, scale=True)
 tensor_to_pil = ToPILImage()
@@ -85,7 +85,7 @@ pil_image.show()
 
 ### Control Version
 
-The control version of Ultra Zoom™ allows you to independently adjust the level of deblurring, denoising, and deartifacting applied to the upscaled image. We accomplish this by conditioning the input image on a Control Vector that gets picked up by control modules embedded into each layer of the encoder. Version `0.2.x` of the library is required for control functionality.
+The control version of MewZoom allows you to independently adjust the level of deblurring, denoising, and deartifacting applied to the upscaled image. We accomplish this by conditioning the input image on a Control Vector that gets picked up by control modules embedded into each layer of the encoder. Version `0.2.x` of the library is required for control functionality.
 
 ```sh
 pip install ultrazoom~=0.2.0 torchvision
@@ -99,14 +99,14 @@ import torch
 from torchvision.io import decode_image, ImageReadMode
 from torchvision.transforms.v2 import ToDtype, ToPILImage
 
-from ultrazoom.model import UltraZoom
-from ultrazoom.control import ControlVector
+from MewZoom.model import MewZoom
+from MewZoom.control import ControlVector
 
 
-model_name = "andrewdalpino/UltraZoom-2X-Ctrl"
+model_name = "andrewdalpino/MewZoom-2X-Ctrl"
 image_path = "./dataset/bird.png"
 
-model = UltraZoom.from_pretrained(model_name)
+model = MewZoom.from_pretrained(model_name)
 
 image_to_tensor = ToDtype(torch.float32, scale=True)
 tensor_to_pil = ToPILImage()
@@ -179,7 +179,7 @@ result.show()
 The control models accept an additional input `c` - a control vector with 3 values corresponding to the assumed level of degradation in the input image. Each value ranges from 0.0 (no degradation) to 1.0 (maximum degradation).
 
 | Index | Parameter | Description |
-|-------|-----------|-------------|
+| ------- | ----------- | ------------- |
 | 0 | `gaussian_blur` | Deblurring strength |
 | 1 | `gaussian_noise` | Denoising strength |
 | 2 | `jpeg_compression` | JPEG artifact removal strength |
@@ -228,7 +228,7 @@ result.show()
 You'll need the code in the repository to train new models and export them for production.
 
 ```sh
-git clone https://github.com/andrewdalpino/UltraZoom
+git clone https://github.com/andrewdalpino/MewZoom
 ```
 
 ### Install Project Dependencies
@@ -245,7 +245,7 @@ pip install -r requirements.txt
 
 ### Pretraining
 
-Ultra Zoom™ is trained in two stages. The first stage focuses on building a foundation model for fine-tuning. It aims to jointly minimize the Pixel Loss with high and low frequency perceptual losses from the perspective of a pretrained VGG19 image classifier. To start training with the default settings, add your training and testing images to the `./dataset/train` and `./dataset/test` folders respectively and call the pretraining script like in the example below. If you are looking for good training sets to start with we recommend the `DIV2K` and/or `Flicker2K` datasets.
+MewZoom is trained in two stages. The first stage focuses on building a foundation model for fine-tuning. It aims to jointly minimize the Pixel Loss with high and low frequency perceptual losses from the perspective of a pretrained VGG19 image classifier. To start training with the default settings, add your training and testing images to the `./dataset/train` and `./dataset/test` folders respectively and call the pretraining script like in the example below. If you are looking for good training sets to start with we recommend the `DIV2K` and/or `Flicker2K` datasets.
 
 ```sh
 python pretrain.py
@@ -324,7 +324,7 @@ Then navigate to the dashboard using your favorite web browser.
 
 ### Fine-tuning
 
-This next stage focuses on squeezing extra performance out of the model using an adversarial training framework. Step 2 of training takes the pretrained checkpoint and fine-tunes the model using feedback from an adversarial critic model. The critic is specially optimized to detect slight differences between real images and images generated by Ultra Zoom™. It uses feedback from the upscaler to improve its detection rate and in turn the upscaler uses feedback from the critic to improve its fool rate. This stage can be considered fully optimized when the critic can no longer reliably detect fake images i.e. the F1 score is pegged near 0.5. To start fine-tuning your pretrained checkpoint see the example below.
+This next stage focuses on squeezing extra performance out of the model using an adversarial training framework. Step 2 of training takes the pretrained checkpoint and fine-tunes the model using feedback from an adversarial critic model. The critic is specially optimized to detect slight differences between real images and images generated by MewZoom™. It uses feedback from the upscaler to improve its detection rate and in turn the upscaler uses feedback from the critic to improve its fool rate. This stage can be considered fully optimized when the critic can no longer reliably detect fake images i.e. the F1 score is pegged near 0.5. To start fine-tuning your pretrained checkpoint see the example below.
 
 ```sh
 python fine-tune.py --base_checkpoint_path=./checkpoints/2X-100.pt

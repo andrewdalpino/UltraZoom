@@ -29,7 +29,7 @@ from torchmetrics.image import (
 )
 
 from data import ImageFolder
-from src.ultrazoom.model import UltraZoom
+from src.ultrazoom.model import MewZoom
 from loss import VGGLoss, BalancedMultitaskLoss
 
 from tqdm import tqdm
@@ -45,7 +45,7 @@ def main():
         "--upscale_ratio",
         default=2,
         type=int,
-        choices=UltraZoom.AVAILABLE_UPSCALE_RATIOS,
+        choices=MewZoom.AVAILABLE_UPSCALE_RATIOS,
     )
     parser.add_argument("--target_resolution", default=256, type=int)
     parser.add_argument("--min_gaussian_blur", default=0.0, type=float)
@@ -185,7 +185,7 @@ def main():
         "qa_num_features": 3,
     }
 
-    upscaler = UltraZoom(**upscaler_args)
+    upscaler = MewZoom(**upscaler_args)
 
     upscaler.add_weight_norms()
 

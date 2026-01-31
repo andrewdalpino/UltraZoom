@@ -32,7 +32,7 @@ from torchmetrics.image import (
 from torchmetrics.classification import BinaryPrecision, BinaryRecall
 
 from data import ImageFolder
-from src.ultrazoom.model import UltraZoom, Bouncer
+from src.ultrazoom.model import MewZoom, Bouncer
 from loss import RelativisticBCELoss, BalancedMultitaskLoss
 
 from tqdm import tqdm
@@ -172,7 +172,7 @@ def main():
     train_loader = new_dataloader(training, shuffle=True)
     test_loader = new_dataloader(testing)
 
-    upscaler = UltraZoom(**upscaler_args)
+    upscaler = MewZoom(**upscaler_args)
 
     upscaler.add_weight_norms()
 

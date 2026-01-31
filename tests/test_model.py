@@ -3,7 +3,7 @@ import torch
 from torch.nn.utils.parametrize import is_parametrized
 
 from src.ultrazoom.model import (
-    UltraZoom,
+    MewZoom,
     ONNXModel,
     UNet,
     Encoder,
@@ -39,14 +39,14 @@ class BaseModelTest(unittest.TestCase):
         self.hidden_ratio = 2
 
 
-class TestUltraZoom(BaseModelTest):
-    """Tests for the UltraZoom class."""
+class TestMewZoom(BaseModelTest):
+    """Tests for the MewZoom class."""
 
     def setUp(self):
         super().setUp()
         self.upscale_ratio = 2
         self.degradation_features = 16
-        self.model = UltraZoom(
+        self.model = MewZoom(
             upscale_ratio=self.upscale_ratio,
             primary_channels=32,
             primary_layers=2,
@@ -68,7 +68,7 @@ class TestUltraZoom(BaseModelTest):
 
     def test_invalid_upscale_ratio(self):
         with self.assertRaises(AssertionError):
-            UltraZoom(
+            MewZoom(
                 upscale_ratio=3,
                 primary_channels=32,
                 primary_layers=2,
@@ -174,7 +174,7 @@ class TestONNXModel(BaseModelTest):
 
     def setUp(self):
         super().setUp()
-        self.ultrazoom = UltraZoom(
+        self.ultrazoom = MewZoom(
             upscale_ratio=2,
             primary_channels=32,
             primary_layers=2,

@@ -23,6 +23,6 @@ dev = ["mypy", "black", "build", "twine"]
 test = ["mypy", "black"]
 
 [project.urls]
-Homepage = "https://github.com/andrewdalpino/UltraZoom"
-Documentation = "https://github.com/andrewdalpino/UltraZoom/README.md"
-Source = "https://github.com/andrewdalpino/UltraZoom"
+Homepage = "https://github.com/andrewdalpino/MewZoom"
+Documentation = "https://github.com/andrewdalpino/MewZoom/README.md"
+Source = "https://github.com/andrewdalpino/MewZoom"

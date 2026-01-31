@@ -40,7 +40,7 @@ from huggingface_hub import PyTorchModelHubMixin
 type FeatureMapSize = tuple[int, int] | list[int]
 
 
-class UltraZoom(Module, PyTorchModelHubMixin):
+class MewZoom(Module, PyTorchModelHubMixin):
     """
     A model for image super-resolution based on a U-Net with adaptive residual
     connections.
@@ -195,7 +195,7 @@ class UltraZoom(Module, PyTorchModelHubMixin):
 class ONNXModel(Module):
     """A wrapper class for exporting to ONNX format."""
 
-    def __init__(self, model: UltraZoom):
+    def __init__(self, model: MewZoom):
         super().__init__()
 
         self.model = model

@@ -12,7 +12,7 @@ from torchmetrics.image import (
     VisualInformationFidelity,
 )
 
-from src.ultrazoom.model import UltraZoom
+from src.ultrazoom.model import MewZoom
 from src.ultrazoom.control import ControlVector
 
 from data import ImagePairs
@@ -50,7 +50,7 @@ def main():
 
     checkpoint = torch.load(args.checkpoint_path, map_location="cpu", weights_only=True)
 
-    model = UltraZoom(**checkpoint["model_args"])
+    model = MewZoom(**checkpoint["model_args"])
 
     model.add_weight_norms()
 

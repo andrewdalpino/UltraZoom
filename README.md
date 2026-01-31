@@ -61,7 +61,7 @@ import torch
 from torchvision.io import decode_image, ImageReadMode
 from torchvision.transforms.v2 import ToDtype, ToPILImage
 
-from MewZoom.model import MewZoom
+from ultrazoom.model import MewZoom
 
 
 model_name = "andrewdalpino/MewZoom-2X"
@@ -99,8 +99,8 @@ import torch
 from torchvision.io import decode_image, ImageReadMode
 from torchvision.transforms.v2 import ToDtype, ToPILImage
 
-from MewZoom.model import MewZoom
-from MewZoom.control import ControlVector
+from ultrazoom.model import MewZoom
+from ultrazoom.control import ControlVector
 
 
 model_name = "andrewdalpino/MewZoom-2X-Ctrl"

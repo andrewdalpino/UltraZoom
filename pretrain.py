@@ -182,6 +182,7 @@ def main():
         "quaternary_channels": args.quaternary_channels,
         "quaternary_layers": args.quaternary_layers,
         "hidden_ratio": args.hidden_ratio,
+        "qa_num_features": 3,
     }
 
     upscaler = UltraZoom(**upscaler_args)
@@ -231,24 +232,29 @@ def main():
     upscaler.train()
 
     for epoch in range(starting_epoch, args.num_epochs + 1):
-        total_l2_loss, total_vgg22_loss, total_vgg54_loss = 0.0, 0.0, 0.0
-        total_gradient_norm = 0.0
+        total_pixel_l2_loss, total_vgg22_loss, total_vgg54_loss = 0.0, 0.0, 0.0
+        total_degradation_loss, total_gradient_norm = 0.0, 0.0
         total_batches, total_steps = 0, 0
 
-        for step, (x, y, _) in enumerate(
+        for step, (x, y_sr, y_deg) in enumerate(
             tqdm(train_loader, desc=f"Epoch {epoch}", leave=False), start=1
         ):
             x = x.to(args.device, non_blocking=True)
-            y = y.to(args.device, non_blocking=True)
+            y_sr = y_sr.to(args.device, non_blocking=True)
+            y_deg = y_deg.to(args.device, non_blocking=True)
 
             with amp_context:
-                y_pred = upscaler.forward(x)
+                y_pred_sr, y_pred_deg = upscaler.forward(x)
 
-                l2_loss = l2_loss_function.forward(y_pred, y)
-                vgg22_loss, vgg54_loss = vgg_loss_function.forward(y_pred, y)
+                pixel_l2_loss = l2_loss_function.forward(y_pred_sr, y_sr)
+                vgg22_loss, vgg54_loss = vgg_loss_function.forward(y_pred_sr, y_sr)
+
+                degradation_loss = l2_loss_function.forward(y_pred_deg, y_deg)
 
                 combined_loss = combined_loss_function.forward(
-                    torch.stack([l2_loss, vgg22_loss, vgg54_loss])
+                    torch.stack(
+                        [pixel_l2_loss, vgg22_loss, vgg54_loss, degradation_loss]
+                    )
                 )
 
                 scaled_loss = combined_loss / args.gradient_accumulation_steps
@@ -266,28 +272,32 @@ def main():
 
                 total_steps += 1
 
-            total_l2_loss += l2_loss.item()
+            total_pixel_l2_loss += pixel_l2_loss.item()
             total_vgg22_loss += vgg22_loss.item()
             total_vgg54_loss += vgg54_loss.item()
+            total_degradation_loss += degradation_loss.item()
 
             total_batches += 1
 
-        average_l2_loss = total_l2_loss / total_batches
+        average_pixel_l2_loss = total_pixel_l2_loss / total_batches
         average_vgg22_loss = total_vgg22_loss / total_batches
         average_vgg54_loss = total_vgg54_loss / total_batches
+        average_degradation_loss = total_degradation_loss / total_batches
         average_gradient_norm = total_gradient_norm / total_steps
 
-        logger.add_scalar("Pixel L2", average_l2_loss, epoch)
+        logger.add_scalar("Pixel L2", average_pixel_l2_loss, epoch)
         logger.add_scalar("VGG22 L2", average_vgg22_loss, epoch)
         logger.add_scalar("VGG54 L2", average_vgg54_loss, epoch)
+        logger.add_scalar("Degradation L2", average_degradation_loss, epoch)
         logger.add_scalar("Gradient Norm", average_gradient_norm, epoch)
 
         print(
             f"Epoch {epoch}:",
-            f"Pixel L2: {average_l2_loss:.4},",
+            f"Pixel L2: {average_pixel_l2_loss:.4},",
             f"VGG22 L2: {average_vgg22_loss:.4},",
             f"VGG54 L2: {average_vgg54_loss:.4},",
-            f"Gradient Norm: {average_gradient_norm:.4},",
+            f"Degradation L2: {average_degradation_loss:.4},",
+            f"Gradient Norm: {average_gradient_norm:.4}",
         )
 
         if epoch % args.eval_interval == 0:

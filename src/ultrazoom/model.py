@@ -22,7 +22,7 @@ from torch.nn import (
     Parameter,
 )
 
-from torch.nn.init import kaiming_uniform_
+from torch.nn.init import kaiming_uniform_, zeros_
 from torch.nn.functional import pad
 
 from torch.nn.utils.parametrize import (
@@ -60,6 +60,7 @@ class UltraZoom(Module, PyTorchModelHubMixin):
         quaternary_channels: int,
         quaternary_layers: int,
         hidden_ratio: int,
+        qa_num_features: int,
     ):
         super().__init__()
 
@@ -81,6 +82,7 @@ class UltraZoom(Module, PyTorchModelHubMixin):
             quaternary_channels,
             quaternary_layers,
             hidden_ratio,
+            qa_num_features,
         )
 
         self.head = SuperResolver(primary_channels, hidden_ratio, upscale_ratio)
@@ -100,7 +102,7 @@ class UltraZoom(Module, PyTorchModelHubMixin):
         return sum(param.numel() for param in self.parameters() if param.requires_grad)
 
     def initialize_weights(self) -> None:
-        """Initialize all model weights using Kaiming normal initialization."""
+        """Initialize all model weights using Kaiming uniform initialization."""
 
         self.stem.initialize_weights()
         self.unet.initialize_weights()
@@ -154,12 +156,12 @@ class UltraZoom(Module, PyTorchModelHubMixin):
         s = self.bicubic.forward(x)
 
         z = self.stem.forward(x)
-        z = self.unet.forward(z)
+        z, z_qa = self.unet.forward(z)
         z = self.head.forward(z)
 
         z = self.skip.forward(s, z)
 
-        return z
+        return z, z_qa
 
     @torch.inference_mode()
     def upscale(self, x: Tensor) -> Tensor:
@@ -170,11 +172,24 @@ class UltraZoom(Module, PyTorchModelHubMixin):
             x: Input image tensor of shape (B, 3, H, W).
         """
 
-        z = self.forward(x)
+        z, _ = self.forward(x)
 
         z = torch.clamp(z, 0, 1)
 
         return z
+
+    @torch.inference_mode()
+    def predict_degredation(self, x: Tensor) -> Tensor:
+        """
+        Convenience method for predicting degradation features.
+
+        Args:
+            x: Input image tensor of shape (B, 3, H, W).
+        """
+
+        _, z_qa = self.forward(x)
+
+        return z_qa
 
 
 class ONNXModel(Module):
@@ -243,6 +258,7 @@ class UNet(Module):
         quaternary_channels: int,
         quaternary_layers: int,
         hidden_ratio: int,
+        qa_num_features: int,
     ):
         super().__init__()
 
@@ -268,6 +284,7 @@ class UNet(Module):
             quaternary_channels,
             ceil(quaternary_layers / 2),
             hidden_ratio,
+            qa_num_features,
         )
 
         self.decoder = Decoder(
@@ -299,11 +316,11 @@ class UNet(Module):
         self.decoder.enable_activation_checkpointing()
 
     def forward(self, x: Tensor) -> Tensor:
-        z1, z2, z3, z4 = self.encoder.forward(x)
+        z1, z2, z3, z4, z_qa = self.encoder.forward(x)
 
         z = self.decoder.forward(z4, z3, z2, z1)
 
-        return z
+        return z, z_qa
 
 
 class Encoder(Module):
@@ -320,6 +337,7 @@ class Encoder(Module):
         quaternary_channels: int,
         quaternary_layers: int,
         hidden_ratio: int,
+        qa_num_features: int,
     ):
         super().__init__()
 
@@ -334,6 +352,10 @@ class Encoder(Module):
         assert (
             quaternary_layers > 0
         ), "Number of quaternary layers must be greater than 0."
+
+        assert (
+            qa_num_features > 0
+        ), "Number of quality assessor features must be greater than 0."
 
         self.stage1 = ModuleList(
             [
@@ -367,6 +389,8 @@ class Encoder(Module):
         self.downsample2 = PixelCrush(secondary_channels, tertiary_channels, 2)
         self.downsample3 = PixelCrush(tertiary_channels, quaternary_channels, 2)
 
+        self.qa_head = QualityAssessor(quaternary_channels, qa_num_features)
+
         self.checkpoint = lambda layer, x: layer.forward(x)
 
     def initialize_weights(self) -> None:
@@ -386,6 +410,8 @@ class Encoder(Module):
         self.downsample2.initialize_weights()
         self.downsample3.initialize_weights()
 
+        self.qa_head.initalize_weights()
+
     def add_weight_norms(self) -> None:
         for layer in self.stage1:
             layer.add_weight_norms()
@@ -403,6 +429,8 @@ class Encoder(Module):
         self.downsample2.add_weight_norms()
         self.downsample3.add_weight_norms()
 
+        self.qa_head.add_weight_norms()
+
     def add_lora_adapters(self, rank: int, alpha: float) -> None:
         for layer in self.stage1:
             layer.add_lora_adapters(rank, alpha)
@@ -419,6 +447,8 @@ class Encoder(Module):
         self.downsample1.add_lora_adapters(rank, alpha)
         self.downsample2.add_lora_adapters(rank, alpha)
         self.downsample3.add_lora_adapters(rank, alpha)
+
+        self.qa_head.add_lora_adapters(rank, alpha)
 
     def enable_activation_checkpointing(self) -> None:
         """
@@ -449,7 +479,9 @@ class Encoder(Module):
         for layer in self.stage4:
             z4 = self.checkpoint(layer, z4)
 
-        return z1, z2, z3, z4
+        z_qa = self.qa_head.forward(z4)
+
+        return z1, z2, z3, z4, z_qa
 
 
 class EncoderBlock(Module):
@@ -561,6 +593,10 @@ class Decoder(Module):
         self.upsample2.initialize_weights()
         self.upsample3.initialize_weights()
 
+        self.skip1.initialize_weights()
+        self.skip2.initialize_weights()
+        self.skip3.initialize_weights()
+
     def add_weight_norms(self) -> None:
         for layer in self.stage1:
             layer.add_weight_norms()
@@ -578,6 +614,10 @@ class Decoder(Module):
         self.upsample2.add_weight_norms()
         self.upsample3.add_weight_norms()
 
+        self.skip1.add_weight_norms()
+        self.skip2.add_weight_norms()
+        self.skip3.add_weight_norms()
+
     def add_lora_adapters(self, rank: int, alpha: float) -> None:
         for layer in self.stage1:
             layer.add_lora_adapters(rank, alpha)
@@ -594,6 +634,10 @@ class Decoder(Module):
         self.upsample1.add_lora_adapters(rank, alpha)
         self.upsample2.add_lora_adapters(rank, alpha)
         self.upsample3.add_lora_adapters(rank, alpha)
+
+        self.skip1.add_lora_adapters(rank, alpha)
+        self.skip2.add_lora_adapters(rank, alpha)
+        self.skip3.add_lora_adapters(rank, alpha)
 
     def enable_activation_checkpointing(self) -> None:
         """
@@ -760,12 +804,14 @@ class AdaptiveResidualMix(Module):
 
         self.conv = Conv2d(in_channels, num_channels, kernel_size=1, bias=False)
 
-        self.alpha = Parameter(torch.Tensor([0.3]))
+        self.alpha = Parameter(torch.tensor(0.0))
 
         self.sigmoid = Sigmoid()
 
     def initialize_weights(self) -> None:
         kaiming_uniform_(self.conv.weight)
+
+        zeros_(self.alpha)
 
     def add_weight_norms(self) -> None:
         self.conv = weight_norm(self.conv)
@@ -783,7 +829,7 @@ class AdaptiveResidualMix(Module):
         beta = self.conv.forward(xz)
         beta = self.sigmoid.forward(beta)
 
-        # Alpha scalar allows learnable global identity mapping.
+        # Alpha scalar allows learnable identity mapping.
         alpha = self.sigmoid.forward(self.alpha)
 
         w = alpha * beta
@@ -951,6 +997,37 @@ class SR2XBlock(Module):
     def forward(self, x: Tensor) -> Tensor:
         z = self.refiner.forward(x)
         z = self.upscale.forward(z)
+
+        return z
+
+
+class QualityAssessor(Module):
+    """A decoder head for estimating the amount of degradation present in the input image."""
+
+    def __init__(self, num_channels: int, num_features: int):
+        super().__init__()
+
+        self.conv = Conv2d(num_channels, num_features, kernel_size=3, padding=1)
+
+        self.pool = AdaptiveAvgPool2d(1)
+
+        self.flatten = Flatten(start_dim=1)
+
+    def add_weight_norms(self) -> None:
+        self.conv = weight_norm(self.conv)
+
+    def add_lora_adapters(self, rank: int, alpha: float) -> None:
+        register_parametrization(
+            self.conv,
+            "weight",
+            ChannelLoRA(self.conv, rank, alpha),
+        )
+
+    def forward(self, x: Tensor) -> Tensor:
+        z = self.conv.forward(x)
+        z = self.pool.forward(z)
+
+        z = self.flatten.forward(z)
 
         return z
 
@@ -1183,9 +1260,9 @@ class DetectorBlock(Module):
 
         self.conv2 = Conv2d(hidden_channels, num_channels, kernel_size=1)
 
-        self.skip = ResidualConnection()
-
         self.silu = SiLU()
+
+        self.skip = AdaptiveResidualMix(num_channels)
 
     def add_spectral_norms(self) -> None:
         self.conv1.add_spectral_norms()

@@ -197,12 +197,12 @@ def main():
     vgg_loss = VGGLoss()
     combined_loss = BalancedMultitaskLoss()
 
-    vgg_loss_function = torch.compile(vgg_loss_function)
+    vgg_loss = torch.compile(vgg_loss)
 
-    vgg_loss_function = vgg_loss_function.to(args.device)
+    vgg_loss = vgg_loss.to(args.device)
 
     print(f"Upscaler has {upscaler.num_trainable_params:,} trainable parameters")
-    print(f"Perceptual loss function has {vgg_loss_function.num_params:,} parameters")
+    print(f"Perceptual loss function has {vgg_loss.num_params:,} parameters")
 
     upscaler_optimizer = AdamW(upscaler.parameters(), lr=args.upscaler_learning_rate)
 
@@ -235,18 +235,18 @@ def main():
         total_degradation_loss, total_gradient_norm = 0.0, 0.0
         total_batches, total_steps = 0, 0
 
-        for step, (x, y_sr, y_deg) in enumerate(
+        for step, (x, y_orig, y_deg) in enumerate(
             tqdm(train_loader, desc=f"Epoch {epoch}", leave=False), start=1
         ):
             x = x.to(args.device, non_blocking=True)
-            y_sr = y_sr.to(args.device, non_blocking=True)
+            y_orig = y_orig.to(args.device, non_blocking=True)
             y_deg = y_deg.to(args.device, non_blocking=True)
 
             with amp_context:
                 y_pred_sr, y_pred_deg = upscaler.forward(x)
 
-                pixel_l2_loss = l2_loss.forward(y_pred_sr, y_sr)
-                vgg22_loss, vgg54_loss = vgg_loss.forward(y_pred_sr, y_sr)
+                pixel_l2_loss = l2_loss.forward(y_pred_sr, y_orig)
+                vgg22_loss, vgg54_loss = vgg_loss.forward(y_pred_sr, y_orig)
                 degradation_loss = l2_loss.forward(y_pred_deg, y_deg)
 
                 loss = combined_loss.forward(

@@ -29,11 +29,10 @@ from torchmetrics.image import (
     VisualInformationFidelity,
 )
 
-from torchmetrics.classification import BinaryPrecision, BinaryRecall
-
 from data import ImageFolder
 from src.ultrazoom.model import MewZoom, Bouncer
 from loss import RelativisticBCELoss, BalancedMultitaskLoss
+from metrics import RelativisticF1Score
 
 from tqdm import tqdm
 
@@ -232,9 +231,7 @@ def main():
     psnr_metric = PeakSignalNoiseRatio(data_range=1.0).to(args.device)
     ssim_metric = StructuralSimilarityIndexMeasure().to(args.device)
     vif_metric = VisualInformationFidelity().to(args.device)
-
-    precision_metric = BinaryPrecision().to(args.device)
-    recall_metric = BinaryRecall().to(args.device)
+    f1_metric = RelativisticF1Score().to(args.device)
 
     print("Fine-tuning ...")
 
@@ -249,15 +246,15 @@ def main():
 
         is_warmup = epoch <= args.critic_warmup_epochs
 
-        for step, (x, y_sr, y_deg) in enumerate(
+        for step, (x, y_orig, y_deg) in enumerate(
             tqdm(train_loader, desc=f"Epoch {epoch}", leave=False), start=1
         ):
             x = x.to(args.device, non_blocking=True)
-            y_sr = y_sr.to(args.device, non_blocking=True)
+            y_orig = y_orig.to(args.device, non_blocking=True)
             y_deg = y_deg.to(args.device, non_blocking=True)
 
-            y_real = torch.full((y_sr.size(0), 1), 1.0).to(args.device)
-            y_fake = torch.full((y_sr.size(0), 1), 0.0).to(args.device)
+            y_real = torch.full((y_orig.size(0), 1), 1.0).to(args.device)
+            y_fake = torch.full((y_orig.size(0), 1), 0.0).to(args.device)
 
             update_this_step = step % args.gradient_accumulation_steps == 0
 
@@ -265,7 +262,7 @@ def main():
                 u_pred_sr, u_pred_deg = upscaler.forward(x)
 
                 _, _, _, _, c_pred_fake = critic.forward(u_pred_sr.detach())
-                _, _, _, _, c_pred_real = critic.forward(y_sr)
+                _, _, _, _, c_pred_real = critic.forward(y_orig)
 
                 c_bce = bce_loss.forward(c_pred_real, c_pred_fake, y_real, y_fake)
 
@@ -290,12 +287,12 @@ def main():
 
             if not is_warmup:
                 with amp_context:
-                    pixel_l2 = l2_loss.forward(u_pred_sr, y_sr)
+                    pixel_l2 = l2_loss.forward(u_pred_sr, y_orig)
 
                     degradation_l2 = l2_loss.forward(u_pred_deg, y_deg)
 
                     _, z2_fake, z3_fake, _, c_pred_fake = critic.forward(u_pred_sr)
-                    _, z2_real, z3_real, _, c_pred_real = critic.forward(y_sr)
+                    _, z2_real, z3_real, _, c_pred_real = critic.forward(y_orig)
 
                     stage_2_l2 = l2_loss.forward(z2_fake, z2_real)
                     stage_3_l2 = l2_loss.forward(z3_fake, z3_real)
@@ -303,7 +300,9 @@ def main():
                     u_bce = bce_loss.forward(c_pred_real, c_pred_fake, y_fake, y_real)
 
                     u_loss = combined_loss.forward(
-                        torch.stack([pixel_l2, stage_2_l2, stage_3_l2, degradation_l2, u_bce])
+                        torch.stack(
+                            [pixel_l2, stage_2_l2, stage_3_l2, degradation_l2, u_bce]
+                        )
                     )
 
                     scaled_u_loss = u_loss / args.gradient_accumulation_steps
@@ -364,39 +363,29 @@ def main():
             upscaler.eval()
             critic.eval()
 
-            for x, y, _ in tqdm(test_loader, desc="Testing", leave=False):
+            for x, y_orig, _ in tqdm(test_loader, desc="Testing", leave=False):
                 x = x.to(args.device, non_blocking=True)
-                y = y.to(args.device, non_blocking=True)
+                y_orig = y_orig.to(args.device, non_blocking=True)
 
-                y_real = torch.full((y.size(0), 1), 1.0).to(args.device)
-                y_fake = torch.full((y.size(0), 1), 0.0).to(args.device)
+                y_real = torch.full((y_orig.size(0), 1), 1.0).to(args.device)
+                y_fake = torch.full((y_orig.size(0), 1), 0.0).to(args.device)
 
                 u_pred_sr = upscaler.upscale(x)
 
-                c_pred_real = critic.predict(y)
                 c_pred_fake = critic.predict(u_pred_sr)
+                c_pred_real = critic.predict(y_orig)
 
-                c_pred_real -= c_pred_fake.mean()
-                c_pred_fake -= c_pred_real.mean()
+                psnr_metric.update(u_pred_sr, y_orig)
+                ssim_metric.update(u_pred_sr, y_orig)
+                vif_metric.update(u_pred_sr, y_orig)
 
-                c_pred = torch.cat((c_pred_real, c_pred_fake), dim=0)
-                labels = torch.cat((y_real, y_fake), dim=0)
-
-                psnr_metric.update(u_pred_sr, y)
-                ssim_metric.update(u_pred_sr, y)
-                vif_metric.update(u_pred_sr, y)
-
-                precision_metric.update(c_pred, labels)
-                recall_metric.update(c_pred, labels)
+                f1_metric.update(c_pred_real, c_pred_fake, y_real, y_fake)
 
             psnr = psnr_metric.compute()
             ssim = ssim_metric.compute()
             vif = vif_metric.compute()
 
-            precision = precision_metric.compute()
-            recall = recall_metric.compute()
-
-            f1_score = 2 * (precision * recall) / (precision + recall + 1e-8)
+            f1_score, precision, recall = f1_metric.compute()
 
             logger.add_scalar("PSNR", psnr, epoch)
             logger.add_scalar("SSIM", ssim, epoch)
@@ -417,9 +406,7 @@ def main():
             psnr_metric.reset()
             ssim_metric.reset()
             vif_metric.reset()
-
-            precision_metric.reset()
-            recall_metric.reset()
+            f1_metric.reset()
 
             upscaler.train()
             critic.train()

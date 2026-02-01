@@ -60,7 +60,7 @@ class MewZoom(Module, PyTorchModelHubMixin):
         quaternary_channels: int,
         quaternary_layers: int,
         hidden_ratio: int,
-        qa_num_features: int,
+        num_deg_features: int,
     ):
         super().__init__()
 
@@ -82,7 +82,7 @@ class MewZoom(Module, PyTorchModelHubMixin):
             quaternary_channels,
             quaternary_layers,
             hidden_ratio,
-            qa_num_features,
+            num_deg_features,
         )
 
         self.head = SuperResolver(primary_channels, hidden_ratio, upscale_ratio)
@@ -258,7 +258,7 @@ class UNet(Module):
         quaternary_channels: int,
         quaternary_layers: int,
         hidden_ratio: int,
-        qa_num_features: int,
+        num_deg_features: int,
     ):
         super().__init__()
 
@@ -284,7 +284,7 @@ class UNet(Module):
             quaternary_channels,
             ceil(quaternary_layers / 2),
             hidden_ratio,
-            qa_num_features,
+            num_deg_features,
         )
 
         self.decoder = Decoder(
@@ -337,7 +337,7 @@ class Encoder(Module):
         quaternary_channels: int,
         quaternary_layers: int,
         hidden_ratio: int,
-        qa_num_features: int,
+        num_deg_features: int,
     ):
         super().__init__()
 
@@ -389,7 +389,7 @@ class Encoder(Module):
         self.downsample2 = PixelCrush(secondary_channels, tertiary_channels, 2)
         self.downsample3 = PixelCrush(tertiary_channels, quaternary_channels, 2)
 
-        self.qa_head = QualityAssessor(quaternary_channels, qa_num_features)
+        self.qa_head = QualityAssessor(quaternary_channels, num_deg_features)
 
         self.checkpoint = lambda layer, x: layer.forward(x)
 

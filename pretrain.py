@@ -182,7 +182,7 @@ def main():
         "quaternary_channels": args.quaternary_channels,
         "quaternary_layers": args.quaternary_layers,
         "hidden_ratio": args.hidden_ratio,
-        "qa_num_features": 3,
+        "num_deg_features": 3,
     }
 
     upscaler = MewZoom(**upscaler_args)
